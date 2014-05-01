@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	mathrand "math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -25,10 +26,8 @@ const (
 	ptMethodName            = "meek"
 	sessionIdLength         = 32
 	maxPayloadLength        = 0x10000
-	initPollInterval        = 100 * time.Millisecond
-	maxPollInterval         = 5 * time.Second
-	pollIntervalMultiplier  = 1.5
 	maxHelperResponseLength = 10000000
+	pollingIntervalRate     = 10 * time.Second
 	helperReadTimeout       = 60 * time.Second
 	helperWriteTimeout      = 2 * time.Second
 )
@@ -104,6 +103,10 @@ func copyLoop(conn net.Conn, info *RequestInfo) error {
 	var interval time.Duration
 
 	ch := make(chan []byte)
+	// Use a crypto/rand source for generating polling intervals; not that
+	// it is critical for security, but to make it so a classifier can't
+	// check that the outputs conform to a known PRNG sequence.
+	rng := mathrand.New(CryptoRandSource)
 
 	// Read from the Conn and send byte slices on the channel.
 	go func() {
@@ -123,22 +126,22 @@ func copyLoop(conn net.Conn, info *RequestInfo) error {
 		close(ch)
 	}()
 
-	interval = initPollInterval
+	interval = 0
 loop:
 	for {
 		var buf []byte
 		var ok bool
 
-		// log.Printf("waiting up to %.2f s", interval.Seconds())
-		// start := time.Now()
+		log.Printf("waiting up to %.2f s", interval.Seconds())
+		start := time.Now()
 		select {
 		case buf, ok = <-ch:
 			if !ok {
 				break loop
 			}
-			// log.Printf("read %d bytes from local after %.2f s", len(buf), time.Since(start).Seconds())
+			log.Printf("read %d bytes from local after %.2f s", len(buf), time.Since(start).Seconds())
 		case <-time.After(interval):
-			// log.Printf("read nothing from local after %.2f s", time.Since(start).Seconds())
+			log.Printf("read nothing from local after %.2f s", time.Since(start).Seconds())
 			buf = nil
 		}
 
@@ -158,16 +161,8 @@ loop:
 			// If we sent or received anything, poll again
 			// immediately.
 			interval = 0
-		} else if interval == 0 {
-			// The first time we don't send or receive anything,
-			// wait a while.
-			interval = initPollInterval
 		} else {
-			// After that, wait a little longer.
-			interval = time.Duration(float64(interval) * pollIntervalMultiplier)
-		}
-		if interval > maxPollInterval {
-			interval = maxPollInterval
+			interval = time.Duration(rng.ExpFloat64() * float64(pollingIntervalRate))
 		}
 	}
 
