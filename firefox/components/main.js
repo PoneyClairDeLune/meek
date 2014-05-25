@@ -137,8 +137,8 @@ MeekHTTPHelper.lookupStatus = function(status) {
 // The specification may look like:
 //   undefined
 //   {"type": "http", "host": "example.com", "port": 8080}
-//   {"type": "socks5", "host": "example.com", "port": 3128}
-//   {"type": "socks4a", "host": "example.com", "port": 3128}
+//   {"type": "socks5", "host": "example.com", "port": 1080}
+//   {"type": "socks4a", "host": "example.com", "port": 1080}
 MeekHTTPHelper.buildProxyInfo = function(spec) {
     // https://developer.mozilla.org/en-US/docs/Mozilla/Tech/XPCOM/Reference/Interface/nsIProxyInfo#Constants
     var flags = Components.interfaces.nsIProxyInfo.TRANSPARENT_PROXY_RESOLVES_HOST;
