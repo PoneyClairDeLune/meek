@@ -15,6 +15,7 @@ func TestMakeProxySpec(t *testing.T) {
 		url.URL{Scheme: "http", Host: "localhost:https"},
 		url.URL{Scheme: "http", User: url.User("username"), Host: "localhost:8080"},
 		url.URL{Scheme: "http", User: url.UserPassword("username", "password"), Host: "localhost:8080"},
+		url.URL{Scheme: "socks5", Host: ":"},
 		url.URL{Scheme: "socks4a", Host: ":"},
 		// "socks" and "socks4" are unknown types.
 		url.URL{Scheme: "socks", Host: "localhost:3128"},
@@ -28,6 +29,10 @@ func TestMakeProxySpec(t *testing.T) {
 		{
 			url.URL{Scheme: "http", Host: "localhost:8080"},
 			ProxySpec{"http", "localhost", 8080},
+		},
+		{
+			url.URL{Scheme: "socks5", Host: "localhost:3128"},
+			ProxySpec{"socks5", "localhost", 3128},
 		},
 		{
 			url.URL{Scheme: "socks4a", Host: "localhost:3128"},
