@@ -8,14 +8,28 @@ import (
 func TestGetProxyURL(t *testing.T) {
 	badTests := [...]string{
 		"bogus",
+		"http:",
+		"://127.0.0.1",
+		"//127.0.0.1",
+		"http:127.0.0.1",
+		"://[::1]",
+		"//[::1]",
+		"http:[::1]",
 		"://localhost",
 		"//localhost",
-		"http:",
 		"http:localhost",
 	}
 	goodTests := [...]struct {
 		input, expected string
 	}{
+		{"http://127.0.0.1", "http://127.0.0.1"},
+		{"http://127.0.0.1:3128", "http://127.0.0.1:3128"},
+		{"http://127.0.0.1:3128/", "http://127.0.0.1:3128/"},
+		{"http://127.0.0.1:3128/path", "http://127.0.0.1:3128/path"},
+		{"http://[::1]", "http://[::1]"},
+		{"http://[::1]:3128", "http://[::1]:3128"},
+		{"http://[::1]:3128/", "http://[::1]:3128/"},
+		{"http://[::1]:3128/path", "http://[::1]:3128/path"},
 		{"http://localhost", "http://localhost"},
 		{"http://localhost:3128", "http://localhost:3128"},
 		{"http://localhost:3128/", "http://localhost:3128/"},
