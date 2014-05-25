@@ -316,10 +316,19 @@ func acceptLoop(ln *pt.SocksListener) error {
 // Return an error if this proxy URL doesn't work with the rest of the
 // configuration.
 func proxyURLError(u *url.URL) error {
-	if options.ProxyURL.Scheme != "http" {
-		return errors.New(fmt.Sprintf("don't understand proxy URL scheme %q", options.ProxyURL.Scheme))
-	}
-	if options.HelperAddr != nil {
+	if options.HelperAddr == nil {
+		// Without the helper we only support HTTP proxies.
+		if options.ProxyURL.Scheme != "http" {
+			return errors.New(fmt.Sprintf("don't understand proxy URL scheme %q", options.ProxyURL.Scheme))
+		}
+	} else {
+		// With the helper we can use HTTP and SOCKS (because it is the
+		// browser that does the proxying.
+		switch options.ProxyURL.Scheme {
+		case "http", "socks4a":
+		default:
+			return errors.New(fmt.Sprintf("don't understand proxy URL scheme %q", options.ProxyURL.Scheme))
+		}
 		if options.ProxyURL.User != nil {
 			return errors.New("a proxy URL with a username or password can't be used with --helper")
 		}
