@@ -43,6 +43,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -438,8 +439,7 @@ func main() {
 
 	listeners := make([]net.Listener, 0)
 	for _, methodName := range ptInfo.MethodNames {
-		switch methodName {
-		case ptMethodName:
+		if strings.HasPrefix(methodName, ptMethodName) {
 			ln, err := pt.ListenSocks("tcp", "127.0.0.1:0")
 			if err != nil {
 				pt.CmethodError(methodName, err.Error())
@@ -449,7 +449,7 @@ func main() {
 			pt.Cmethod(methodName, ln.Version(), ln.Addr())
 			log.Printf("listening on %s", ln.Addr())
 			listeners = append(listeners, ln)
-		default:
+		} else {
 			pt.CmethodError(methodName, "no such method")
 		}
 	}
