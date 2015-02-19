@@ -123,7 +123,6 @@ func roundTripWithHelper(buf []byte, info *RequestInfo) (*http.Response, error) 
 
 	// Read the response.
 	var length uint32
-	s.SetReadDeadline(time.Now().Add(helperReadTimeout))
 	err = binary.Read(s, binary.BigEndian, &length)
 	if err != nil {
 		return nil, err

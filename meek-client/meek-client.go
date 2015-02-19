@@ -57,8 +57,7 @@ const (
 	// stream.
 	sessionIDLength = 8
 	// The size of the largest chunk of data we will read from the SOCKS
-	// port before forwarding it in a request, and the maximum size of a
-	// body we are willing to handle in a reply.
+	// port before forwarding it in a request.
 	maxPayloadLength = 0x10000
 	// We must poll the server to see if it has anything to send; there is
 	// no way for the server to push data back to us until we send an HTTP
@@ -76,7 +75,6 @@ const (
 	retryDelay = 30 * time.Second
 	// Safety limits on interaction with the HTTP helper.
 	maxHelperResponseLength = 10000000
-	helperReadTimeout       = 60 * time.Second
 	helperWriteTimeout      = 2 * time.Second
 )
 
@@ -165,7 +163,7 @@ func sendRecv(buf []byte, conn net.Conn, info *RequestInfo) (int64, error) {
 		return 0, err
 	}
 	defer resp.Body.Close()
-	return io.Copy(conn, io.LimitReader(resp.Body, maxPayloadLength))
+	return io.Copy(conn, resp.Body)
 }
 
 // Repeatedly read from conn, issue HTTP requests, and write the responses back
