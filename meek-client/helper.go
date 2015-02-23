@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -131,14 +130,12 @@ type JSONRequest struct {
 	Method string            `json:"method,omitempty"`
 	URL    string            `json:"url,omitempty"`
 	Header map[string]string `json:"header,omitempty"`
-	Body   []byte            `json:"body,omitempty"`
 	Proxy  *ProxySpec        `json:"proxy,omitempty"`
 }
 
 type JSONResponse struct {
 	Error  string `json:"error,omitempty"`
 	Status int    `json:"status"`
-	Body   []byte `json:"body"`
 }
 
 // ProxySpec encodes information we need to connect through a proxy.
@@ -197,14 +194,12 @@ func roundTripWithHelper(buf []byte, info *RequestInfo) (*http.Response, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer s.Close()
 
 	// Encode our JSON.
 	req := JSONRequest{
 		Method: "POST",
 		URL:    info.URL.String(),
 		Header: make(map[string]string),
-		Body:   buf,
 	}
 	req.Header["X-Session-Id"] = info.SessionID
 	if info.Host != "" {
@@ -222,28 +217,20 @@ func roundTripWithHelper(buf []byte, info *RequestInfo) (*http.Response, error) 
 
 	// Send the request.
 	s.SetWriteDeadline(time.Now().Add(helperWriteTimeout))
-	err = binary.Write(s, binary.BigEndian, uint32(len(encReq)))
+	cw := newChunkedWriter(s)
+	_, err = cw.WriteAndTerminate(encReq)
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.Write(encReq)
+	cw = newChunkedWriter(s)
+	_, err = cw.WriteAndTerminate(buf)
 	if err != nil {
 		return nil, err
 	}
 
 	// Read the response.
-	var length uint32
-	err = binary.Read(s, binary.BigEndian, &length)
-	if err != nil {
-		return nil, err
-	}
-	if length > maxHelperResponseLength {
-		return nil, fmt.Errorf("helper's returned data is too big (%d > %d)",
-			length, maxHelperResponseLength)
-
-	}
-	encResp := make([]byte, length)
-	_, err = io.ReadFull(s, encResp)
+	cr := newChunkedReader(io.LimitReader(s, maxHelperResponseLength))
+	encResp, err := ioutil.ReadAll(cr)
 	if err != nil {
 		return nil, err
 	}
@@ -261,10 +248,9 @@ func roundTripWithHelper(buf []byte, info *RequestInfo) (*http.Response, error) 
 
 	// Mock up an HTTP response.
 	resp := http.Response{
-		Status:        http.StatusText(jsonResp.Status),
-		StatusCode:    jsonResp.Status,
-		Body:          ioutil.NopCloser(bytes.NewReader(jsonResp.Body)),
-		ContentLength: int64(len(jsonResp.Body)),
+		Status:     http.StatusText(jsonResp.Status),
+		StatusCode: jsonResp.Status,
+		Body:       &chunkedReadCloser{newChunkedReader(s)},
 	}
 	return &resp, nil
 }

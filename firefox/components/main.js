@@ -3,9 +3,21 @@
 //
 // The extension opens a TCP socket listening on localhost on an ephemeral port.
 // It writes the port number in a recognizable format to stdout so that a parent
-// process can read it and connect. When the extension receives a connection, it
-// reads a 4-byte big-endian length field, then tries to read that many bytes of
-// data. The data is UTF-8–encoded JSON, having the format
+// process can read it and connect.
+//
+// The protocol is based on chunked streams. A chunked stream is a sequence of
+// byte chunks, each preceded by a 2-byte big-endian length. The stream ends
+// with a chunk of length 0. (Kind of like the "chunked" transfer encoding in
+// HTTP.) The client sends its request in two chunked streams. The first stream
+// contains a JSON representation of the request metadata (HTTP method, URL,
+// header, etc.), and the second is the raw bytes of the request body. This
+// extension likewise sends back its response as two chunked streams. The first
+// contains a JSON representation of the response status (the status code and
+// error message, if any), and the second is the response body. In summary, both
+// sides send data like:
+// XX XX <XXXX bytes of JSON> 00 00 [YY YY <YYYY bytes of body> [ZZ ZZ <ZZZZ bytes of body>...]] 00 00
+//
+// The JSON representation of a request is of the form:
 //  {
 //      "method": "POST",
 //      "url": "https://www.google.com/",
@@ -18,22 +30,20 @@
 //          "host": "proxy.example.com",
 //          "port": 8080
 //      },
-//      "body": "...base64..."
 //  }
-// The extension makes the request as commanded. It returns the response to the
-// client as a JSON blob, preceded by a 4-byte length as before. If successful,
-// the response looks like
+//
+// The JSON representation of a response is of the form:
 //  {
 //      "status": 200,
-//      "body": "...base64..."
 //  }
 // If there is a network error, the "error" key will be defined. A 404 response
 // or similar from the target web server is not considered such an error.
 //  {
 //      "error": "NS_ERROR_UNKNOWN_HOST"
 //  }
+//
 // The extension closes the connection after each transaction, and the client
-// must reconnect to do another request.
+// must reconnect in order to make another request.
 
 // https://developer.mozilla.org/en-US/docs/How_to_Build_an_XPCOM_Component_in_Javascript#Using_XPCOMUtils
 // https://developer.mozilla.org/en-US/docs/Mozilla/JavaScript_code_modules/XPCOMUtils.jsm
@@ -212,11 +222,10 @@ MeekHTTPHelper.buildProxyInfo = function(spec) {
     return null;
 };
 
-// Transmit an HTTP response over the given nsITransport. resp is an object with
-// keys perhaps including "status", "body", and "error".
-MeekHTTPHelper.sendResponse = function(transport, resp) {
+// Transmit an HTTP response info blob over the given nsIOutputStream. resp is
+// an object with keys perhaps including "status" and "error".
+MeekHTTPHelper.sendResponse = function(outputStream, resp) {
     // dump("sendResponse " + JSON.stringify(resp) + "\n");
-    let outputStream = transport.openOutputStream(Components.interfaces.nsITransport.OPEN_BLOCKING, 0, 0);
     let output = Components.classes["@mozilla.org/binaryoutputstream;1"]
         .createInstance(Components.interfaces.nsIBinaryOutputStream);
     output.setOutputStream(outputStream);
@@ -224,19 +233,13 @@ MeekHTTPHelper.sendResponse = function(transport, resp) {
     let converter = Components.classes["@mozilla.org/intl/scriptableunicodeconverter"]
         .createInstance(Components.interfaces.nsIScriptableUnicodeConverter);
     converter.charset = "UTF-8";
-    let s = JSON.stringify(resp);
-    let data = converter.convertToByteArray(s);
+    let data = JSON.stringify(resp);
 
-    let deadline = Date.now() + MeekHTTPHelper.LOCAL_WRITE_TIMEOUT * 1000;
-    try {
-        MeekHTTPHelper.refreshDeadline(transport, deadline);
-        output.write32(data.length);
-        MeekHTTPHelper.refreshDeadline(transport, deadline);
-        output.writeByteArray(data, data.length);
-        MeekHTTPHelper.refreshDeadline(transport, null);
-    } finally {
-        output.close();
-    }
+    if (data.length > 65535)
+        throw Components.Exception("Object is too large for chunking (" + data.length + " bytes)", Components.results.NS_ERROR_ILLEGAL_VALUE);
+    output.write16(data.length);
+    output.writeBytes(data, data.length);
+    output.write16(0);
 };
 
 // LocalConnectionHandler handles each new client connection received on the
@@ -257,18 +260,14 @@ MeekHTTPHelper.LocalConnectionHandler.prototype = {
 
     makeRequest: function(req) {
         // dump("makeRequest " + JSON.stringify(req) + "\n");
-        if (!MeekHTTPHelper.requestOk(req)) {
-            MeekHTTPHelper.sendResponse(this.transport, {"error": "request failed validation"});
-            return;
-        }
+        if (!MeekHTTPHelper.requestOk(req))
+            return this.sendError("request failed validation");
 
         // Check what proxy to use, if any.
         // dump("using proxy " + JSON.stringify(req.proxy) + "\n");
         let proxyInfo = MeekHTTPHelper.buildProxyInfo(req.proxy);
-        if (proxyInfo === null) {
-            MeekHTTPHelper.sendResponse(this.transport, {"error": "can't create nsIProxyInfo from " + JSON.stringify(req.proxy)});
-            return;
-        }
+        if (proxyInfo === null)
+            return this.sendError("can't create nsIProxyInfo from " + JSON.stringify(req.proxy));
 
         // Construct an HTTP channel with the given nsIProxyInfo.
         // https://developer.mozilla.org/en-US/docs/XPCOM_Interface_Reference/nsIHttpChannel
@@ -292,23 +291,26 @@ MeekHTTPHelper.LocalConnectionHandler.prototype = {
                 this.channel.setRequestHeader(key, req.header[key], false);
             }
         }
-        if (req.body !== undefined) {
-            let body = atob(req.body);
-            let inputStream = Components.classes["@mozilla.org/io/string-input-stream;1"]
-                .createInstance(Components.interfaces.nsIStringInputStream);
-            inputStream.setData(body, body.length);
-            let uploadChannel = this.channel.QueryInterface(Components.interfaces.nsIUploadChannel);
-            uploadChannel.setUploadStream(inputStream, "application/octet-stream", body.length);
-        }
+        let inputStream = Components.classes["@mozilla.org/io/string-input-stream;1"]
+            .createInstance(Components.interfaces.nsIStringInputStream);
+        inputStream.setData(req.body, req.body.length);
+        let uploadChannel = this.channel.QueryInterface(Components.interfaces.nsIUploadChannel);
+        uploadChannel.setUploadStream(inputStream, "application/octet-stream", req.body.length);
         // https://developer.mozilla.org/en-US/docs/XPCOM_Interface_Reference/nsIUploadChannel
         // says we must set requestMethod after calling setUploadStream.
         this.channel.requestMethod = req.method;
         this.channel.redirectionLimit = 0;
 
-        this.listener = new MeekHTTPHelper.HttpStreamListener(function(resp) {
-            MeekHTTPHelper.sendResponse(this.transport, resp);
-        }.bind(this));
+        this.listener = new MeekHTTPHelper.HttpStreamListener(this.transport);
         this.channel.asyncOpen(this.listener, this.channel);
+    },
+
+    sendError: function(msg) {
+        let output = this.transport.openOutputStream(Components.interfaces.nsITransport.OPEN_BLOCKING, 0, 0);
+        let deadline = Date.now() + MeekHTTPHelper.LOCAL_WRITE_TIMEOUT * 1000;
+        MeekHTTPHelper.refreshDeadline(this.transport, deadline);
+        MeekHTTPHelper.sendResponse(output, {"error": msg});
+        this.transport.close(0);
     },
 };
 
@@ -414,157 +416,109 @@ MeekHTTPHelper.ChunkedReader.prototype = {
         this.chunks.push(this.buf);
         this.buf = new Uint8Array(2);
         this.bytesToRead = this.buf.length;
-        this.state = this.STATE_READING_BODY_LENGTH;
+        this.state = this.STATE_READING_LENGTH;
     },
 };
 
-// RequestReader reads a JSON-encoded request from the given transport, and
-// calls the given callback with the request as an argument. In case of error,
+// RequestReader reads an encoded request from the given transport, then calls
+// the given callback with the request object as an argument. In case of error,
 // the transport is closed and the callback is not called.
 MeekHTTPHelper.RequestReader = function(transport, callback) {
-    this.transport = transport;
     this.callback = callback;
+    this.req = null;
 
-    this.curThread = Components.classes["@mozilla.org/thread-manager;1"].getService().currentThread;
-    this.inputStream = this.transport.openInputStream(Components.interfaces.nsITransport.OPEN_BLOCKING, 0, 0);
-
-    this.state = this.STATE_READING_LENGTH;
-    // Initially size the buffer to read the 4-byte length.
-    this.buf = new Uint8Array(4);
-    this.bytesToRead = this.buf.length;
     this.deadline = Date.now() + MeekHTTPHelper.LOCAL_READ_TIMEOUT * 1000;
-    this.asyncWait();
+    this.reader = new MeekHTTPHelper.ChunkedReader(transport);
+    this.reader.read(this.deadline, this.handleJSON.bind(this));
 };
 MeekHTTPHelper.RequestReader.prototype = {
-    // The onInputStreamReady callback is called for all read events. These
-    // constants keep track of the state of parsing.
-    STATE_READING_LENGTH: 1,
-    STATE_READING_OBJECT: 2,
-    STATE_DONE: 3,
-
-    // Do an asyncWait and handle the result.
-    asyncWait: function() {
-        MeekHTTPHelper.refreshDeadline(this.transport, this.deadline);
-        this.inputStream.asyncWait(this, 0, 0, this.curThread);
-    },
-
-    // nsIInputStreamCallback implementation.
-    onInputStreamReady: function(inputStream) {
-        try {
-            let input = Components.classes["@mozilla.org/binaryinputstream;1"]
-                .createInstance(Components.interfaces.nsIBinaryInputStream);
-            input.setInputStream(inputStream);
-            switch (this.state) {
-            case this.STATE_READING_LENGTH:
-                this.doStateReadingLength(input);
-                break;
-            case this.STATE_READING_OBJECT:
-                this.doStateReadingObject(input);
-                break;
-            }
-            if (this.state !== this.STATE_DONE)
-                this.asyncWait();
-        } catch (e) {
-            this.transport.close(0);
-            throw e;
-        }
-    },
-
-    // Read into this.buf (up to its capacity) and decrement this.bytesToRead.
-    readIntoBuf: function(input) {
-        let n = Math.min(input.available(), this.bytesToRead);
-        let data = input.readByteArray(n);
-        this.buf.subarray(this.buf.length - this.bytesToRead).set(data);
-        this.bytesToRead -= n;
-    },
-
-    doStateReadingLength: function(input) {
-        this.readIntoBuf(input);
-        if (this.bytesToRead > 0)
-            return;
-
-        let b = this.buf;
-        let len = (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3];
-        if (len > 1000000)
-            throw Components.Exception("Object length is too large (" + len + " bytes)", Components.results.NS_ERROR_ILLEGAL_VALUE);
-
-        this.state = this.STATE_READING_OBJECT;
-        this.buf = new Uint8Array(len);
-        this.bytesToRead = this.buf.length;
-    },
-
-    doStateReadingObject: function(input) {
-        this.readIntoBuf(input);
-        if (this.bytesToRead > 0)
-            return;
-
+    handleJSON: function(data) {
         let converter = Components.classes["@mozilla.org/intl/scriptableunicodeconverter"]
             .createInstance(Components.interfaces.nsIScriptableUnicodeConverter);
         converter.charset = "UTF-8";
-        let s = converter.convertFromByteArray(this.buf, this.buf.length);
-        let req = JSON.parse(s);
+        let s = converter.convertFromByteArray(data, data.length);
+        this.req = JSON.parse(s);
+        if (this.req.body !== undefined) {
+            // Fail fast on clients that use an older version of this protocol.
+            throw Components.Exception("req has body defined in info blob", Components.results.NS_ERROR_ILLEGAL_VALUE);
+        }
+        // Now read the body.
+        this.reader.read(this.deadline, this.handleBody.bind(this));
+    },
 
-        this.state = this.STATE_DONE;
-        this.buf = null;
-        this.bytesToRead = 0;
-
-        MeekHTTPHelper.refreshDeadline(this.transport, null);
-        this.callback(req);
+    handleBody: function(data) {
+        this.req.body = String.fromCharCode.apply(null, data);
+        this.callback(this.req);
     },
 };
 
-// HttpStreamListener makes the requested HTTP request and calls the given
-// callback with a representation of the response. The "error" key of the return
-// value is defined if and only if there was an error.
-MeekHTTPHelper.HttpStreamListener = function(callback) {
-    this.callback = callback;
-    // This is a list of binary strings that is concatenated in onStopRequest.
-    this.body = [];
-    this.length = 0;
+// HttpStreamListener listens to an HTTP response and writes it back to the
+// given transport. The "error" key of the written response object is present if
+// and only if there was an error.
+MeekHTTPHelper.HttpStreamListener = function(transport) {
+    this.transport = transport;
+    this.resp = {};
+    this.respSent = false;
+
+    // No timeouts while writing response.
+    MeekHTTPHelper.refreshDeadline(this.transport, null);
+
+    this.outputStream = this.transport.openOutputStream(Components.interfaces.nsITransport.OPEN_BLOCKING, 0, 0);
+    this.output = Components.classes["@mozilla.org/binaryoutputstream;1"]
+        .createInstance(Components.interfaces.nsIBinaryOutputStream);
+    this.output.setOutputStream(this.outputStream);
 };
 // https://developer.mozilla.org/en-US/docs/Creating_Sandboxed_HTTP_Connections
 MeekHTTPHelper.HttpStreamListener.prototype = {
     // https://developer.mozilla.org/en-US/docs/XPCOM_Interface_Reference/nsIRequestObserver
     onStartRequest: function(req, context) {
         // dump("onStartRequest\n");
+        try {
+            this.resp.status = context.responseStatus;
+        } catch (e) {
+            // Reading context.responseStatus can fail in this way when there is
+            // no HTTP response; e.g., when the connection is reset.
+            if (!(e instanceof Components.interfaces.nsIXPCException
+                  && e.result === Components.results.NS_ERROR_NOT_AVAILABLE)) {
+                throw(e);
+            }
+        }
     },
     onStopRequest: function(req, context, status) {
         // dump("onStopRequest " + status + "\n");
-        let resp = {};
-        try {
-            resp.status = context.responseStatus;
-        } catch (e) {
-            if (e instanceof Components.interfaces.nsIXPCException
-                && e.result == Components.results.NS_ERROR_NOT_AVAILABLE) {
-                // Reading context.responseStatus can fail in this way when
-                // there is no HTTP response; e.g., when the connection is
-                // reset.
-            }
-        }
-        if (Components.isSuccessCode(status)) {
-            resp.body = btoa(this.body.join(""));
-        } else {
+        if (!Components.isSuccessCode(status)) {
+            // If there was an error, let's hope we didn't send the body yet, or
+            // else we can't report the error.
             let err = MeekHTTPHelper.lookupStatus(status);
             if (err !== null)
-                resp.error = err;
+                this.resp.error = err;
             else
-                resp.error = "error " + String(status);
+                this.resp.error = "error " + String(status);
         }
-        this.callback(resp);
+        if (!this.respSent)
+            this.sendResp();
+        this.output.write16(0);
+        this.output.close();
     },
 
+    // Copy the response body to the transport as it arrives.
     // https://developer.mozilla.org/en-US/docs/XPCOM_Interface_Reference/nsIStreamListener
     onDataAvailable: function(request, context, stream, sourceOffset, length) {
         // dump("onDataAvailable " + length + " bytes\n");
-        this.length += length;
-        let input = Components.classes["@mozilla.org/binaryinputstream;1"]
-            .createInstance(Components.interfaces.nsIBinaryInputStream);
-        input.setInputStream(stream);
-        this.body.push(String.fromCharCode.apply(null, input.readByteArray(length)));
-        if (this.length > 1000000) {
-            request.cancel(Components.results.NS_ERROR_ILLEGAL_VALUE);
-            return;
+        if (!this.respSent)
+            this.sendResp();
+        while (length > 65535) {
+            this.output.write16(65535);
+            this.outputStream.writeFrom(stream, 65535);
+            length -= 65535;
         }
+        this.output.write16(length);
+        this.outputStream.writeFrom(stream, length);
+    },
+
+    sendResp: function() {
+        MeekHTTPHelper.sendResponse(this.output, this.resp);
+        this.respSent = true;
     },
 };
 
