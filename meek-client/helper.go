@@ -17,6 +17,116 @@ import (
 // The code in this file has to do with communication between meek-client and
 // the meek-http-helper browser extension.
 
+// chunkedReader decodes a stream, where each chunk of data is preceded by a
+// 16-byte big-endian length. EOF is marked by a chunk of length 0.
+type chunkedReader struct {
+	io.Reader
+	buf []byte
+	err error
+}
+
+func newChunkedReader(r io.Reader) *chunkedReader {
+	return &chunkedReader{r, nil, nil}
+}
+
+// Read from a chunked stream. Returns io.EOF after reading a chunk length of 0.
+// If there is an io.EOF in the underlying io.Reader, returns
+// io.ErrUnexpectedEOF.
+func (r *chunkedReader) Read(p []byte) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
+
+	if len(r.buf) == 0 {
+		// Refill the buffer.
+		var length uint16
+		r.err = binary.Read(r.Reader, binary.BigEndian, &length)
+		if r.err == io.EOF {
+			r.err = io.ErrUnexpectedEOF
+		}
+		if r.err != nil {
+			return 0, r.err
+		}
+
+		if length == 0 {
+			r.err = io.EOF
+			return 0, r.err
+		}
+
+		var n int
+		r.buf = make([]byte, length)
+		n, r.err = io.ReadFull(r.Reader, r.buf)
+		r.buf = r.buf[:n]
+		if r.err == io.EOF {
+			r.err = io.ErrUnexpectedEOF
+		}
+	}
+
+	n := copy(p, r.buf)
+	r.buf = r.buf[n:]
+	return n, r.err
+}
+
+// chunkedReadCloser adds a Close method to chunkedReader, if the
+// chunkedReader's underlying io.Reader is an io.Closer.
+type chunkedReadCloser struct {
+	*chunkedReader
+}
+
+func (rc *chunkedReadCloser) Close() error {
+	if r, ok := rc.chunkedReader.Reader.(io.Closer); ok {
+		return r.Close()
+	}
+	return nil
+}
+
+// chunkedWriter encodes a stream, where each chunk of data is preceded by a
+// 16-byte big-endian length.
+type chunkedWriter struct {
+	io.Writer
+}
+
+func newChunkedWriter(w io.Writer) *chunkedWriter {
+	return &chunkedWriter{w}
+}
+
+// Write to a chunked stream.
+func (w *chunkedWriter) Write(p []byte) (int, error) {
+	n := 0
+	for len(p) > 0 {
+		chunk := p
+		if len(chunk) > 65535 {
+			chunk = chunk[:65535]
+		}
+		err := binary.Write(w.Writer, binary.BigEndian, uint16(len(chunk)))
+		if err != nil {
+			return n, err
+		}
+		_, err = w.Writer.Write(chunk)
+		p = p[len(chunk):]
+		n += len(chunk)
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+// Write the EOF marker, a chunk with length 0. You can do further Write calls
+// after calling this function in order to start a new chunked stream.
+func (w *chunkedWriter) Terminate() error {
+	return binary.Write(w.Writer, binary.BigEndian, uint16(0))
+}
+
+// Calls Terminate after calling Write.
+func (w *chunkedWriter) WriteAndTerminate(p []byte) (int, error) {
+	n, err := w.Write(p)
+	if err != nil {
+		return n, err
+	}
+	return n, w.Terminate()
+}
+
 type JSONRequest struct {
 	Method string            `json:"method,omitempty"`
 	URL    string            `json:"url,omitempty"`

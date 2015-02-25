@@ -1,9 +1,114 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
+	"io"
+	"io/ioutil"
 	"net/url"
 	"testing"
 )
+
+// Write chunks and read them out again, and ensure that they match.
+func roundTripChunked(t *testing.T, chunks [][]byte) {
+	buf := &bytes.Buffer{}
+	cr := newChunkedReader(buf)
+	cw := newChunkedWriter(buf)
+
+	var err error
+	for _, chunk := range chunks {
+		_, err = cw.Write(chunk)
+		if err != nil {
+			t.Errorf("error %v when writing %v", err, chunks)
+			return
+		}
+	}
+	err = cw.Terminate()
+	if err != nil {
+		t.Errorf("error %v when terminating %v", err, chunks)
+		return
+	}
+
+	p, err := ioutil.ReadAll(cr)
+	if err != nil {
+		t.Errorf("error %v when reading %v", err, chunks)
+		return
+	}
+	// Read again to make sure error is consistent.
+	q, err := ioutil.ReadAll(cr)
+	if len(q) != 0 {
+		t.Errorf("reading after EOF yielded %v from %v", q, chunks)
+	}
+	if err != nil {
+		t.Errorf("reading after EOF gave error %v from %v", err, chunks)
+		return
+	}
+
+	expected := bytes.Join(chunks, []byte{})
+	if !bytes.Equal(p, expected) {
+		t.Errorf("received %v, expected %v", p, expected)
+		return
+	}
+}
+
+func randArray(n int) []byte {
+	p := make([]byte, n)
+	_, err := rand.Read(p)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
+func TestChunkedRoundtrip(t *testing.T) {
+	roundTripChunked(t, [][]byte{})
+	roundTripChunked(t, [][]byte{{}, {}, {}})
+	roundTripChunked(t, [][]byte{[]byte("hello")})
+	roundTripChunked(t, [][]byte{randArray(65535), randArray(65536), randArray(65537)})
+}
+
+func TestChunkedReader(t *testing.T) {
+	tests := []struct {
+		input    []byte
+		err      error
+		expected []byte
+	}{
+		{[]byte{0x01}, io.ErrUnexpectedEOF, []byte{}},
+		{[]byte("\x00\x0ahello"), io.ErrUnexpectedEOF, []byte("hello")},
+	}
+
+	for _, test := range tests {
+		cr := newChunkedReader(bytes.NewReader(test.input))
+		p, err := ioutil.ReadAll(cr)
+		if err != test.err {
+			t.Errorf("reading from %v gave error %v, not %v", test.input, err, test.err)
+		}
+		if !bytes.Equal(p, test.expected) {
+			t.Errorf("reading from %v returned %v, not %v", test.input, p, test.expected)
+		}
+	}
+}
+
+// Just remember when Close has been called.
+type closer struct {
+	io.Reader
+	closed *bool
+}
+
+func (r *closer) Close() error {
+	*r.closed = true
+	return nil
+}
+
+// Check that chunkedReadCloser.Close also closes the underlying io.Reader.
+func TestChunkedReadCloser(t *testing.T) {
+	var closed bool
+	cr := chunkedReadCloser{newChunkedReader(&closer{bytes.NewReader([]byte{}), &closed})}
+	cr.Close()
+	if !closed {
+		t.Errorf("chunkedReadCloser did not close underlying io.Reader")
+	}
+}
 
 func TestMakeProxySpec(t *testing.T) {
 	badTests := [...]url.URL{

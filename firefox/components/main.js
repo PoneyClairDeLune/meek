@@ -312,6 +312,112 @@ MeekHTTPHelper.LocalConnectionHandler.prototype = {
     },
 };
 
+// ChunkedReader reads a chunked stream, which is a sequence of byte chunks,
+// each preceded by a 16-bit big-endian length. The end of a stream is marked by
+// a zero-length chunk.
+MeekHTTPHelper.ChunkedReader = function(transport) {
+    this.transport = transport;
+
+    this.inputStream = this.transport.openInputStream(Components.interfaces.nsITransport.OPEN_BLOCKING, 0, 0);
+    this.curThread = Components.classes["@mozilla.org/thread-manager;1"].getService().currentThread;
+};
+MeekHTTPHelper.ChunkedReader.prototype = {
+    // The onInputStreamReady callback is called for all read events. These
+    // constants keep track of the state of parsing.
+    STATE_READING_LENGTH: 1,
+    STATE_READING_DATA: 2,
+    STATE_DONE: 3,
+
+    read: function(deadline, callback) {
+        this.deadline = deadline;
+        this.callback = callback;
+        // An array of chunks (as Uint8Arrays) that are concatenated before
+        // being passed to the callback.
+        this.chunks = [];
+        // Initially size buf to read the 2-byte length.
+        this.buf = new Uint8Array(2);
+        this.bytesToRead = this.buf.length;
+        this.state = this.STATE_READING_LENGTH;
+        this.asyncWait();
+    },
+
+    // Do an asyncWait and handle the result.
+    asyncWait: function() {
+        MeekHTTPHelper.refreshDeadline(this.transport, this.deadline);
+        this.inputStream.asyncWait(this, 0, 0, this.curThread);
+    },
+
+    // Read into this.buf (up to its capacity) and decrement this.bytesToRead.
+    readIntoBuf: function(input) {
+        let n = Math.min(input.available(), this.bytesToRead);
+        let data = input.readByteArray(n);
+        this.buf.subarray(this.buf.length - this.bytesToRead).set(data);
+        this.bytesToRead -= n;
+    },
+
+    // nsIInputStreamCallback implementation.
+    onInputStreamReady: function(inputStream) {
+        let input = Components.classes["@mozilla.org/binaryinputstream;1"]
+            .createInstance(Components.interfaces.nsIBinaryInputStream);
+        input.setInputStream(inputStream);
+
+        try {
+            switch (this.state) {
+            case this.STATE_READING_LENGTH:
+                this.doStateReadingLength(input);
+                break;
+            case this.STATE_READING_DATA:
+                this.doStateReadingData(input);
+                break;
+            }
+
+            if (this.state === this.STATE_DONE) {
+                let length = 0;
+                for (let i = 0; i < this.chunks.length; i++)
+                    length += this.chunks[i].length;
+                let data = new Uint8Array(length);
+                let n = 0;
+                for (let i = 0; i < this.chunks.length; i++) {
+                    data.set(this.chunks[i], n);
+                    n += this.chunks[i].length;
+                }
+                this.callback(data);
+            } else {
+                this.asyncWait();
+            }
+        } catch (e) {
+            this.transport.close(0);
+            throw e;
+        }
+    },
+
+    doStateReadingLength: function(input) {
+        this.readIntoBuf(input);
+        if (this.bytesToRead > 0)
+            return;
+
+        let len = (this.buf[0] << 8) | this.buf[1];
+        if (len == 0) {
+            this.state = this.STATE_DONE;
+        } else {
+            this.buf = new Uint8Array(len);
+            this.bytesToRead = this.buf.length;
+            this.state = this.STATE_READING_DATA;
+        }
+    },
+
+    doStateReadingData: function(input) {
+        this.readIntoBuf(input);
+        if (this.bytesToRead > 0)
+            return;
+
+        this.chunks.push(this.buf);
+        this.buf = new Uint8Array(2);
+        this.bytesToRead = this.buf.length;
+        this.state = this.STATE_READING_BODY_LENGTH;
+    },
+};
+
 // RequestReader reads a JSON-encoded request from the given transport, and
 // calls the given callback with the request as an argument. In case of error,
 // the transport is closed and the callback is not called.
