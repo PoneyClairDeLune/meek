@@ -89,8 +89,7 @@ func TestOriginalClientPrecedence(t *testing.T) {
 		Expected net.IP
 	}{
 		{
-			http.Request{
-			},
+			http.Request{},
 			nil,
 		},
 		{
@@ -140,7 +139,7 @@ func TestOriginalClientPrecedence(t *testing.T) {
 			http.Request{
 				RemoteAddr: "5.6.7.8:5678",
 				Header: http.Header{
-					http.CanonicalHeaderKey("Meek-IP"): []string{"1.2.3.4"},
+					http.CanonicalHeaderKey("Meek-IP"):         []string{"1.2.3.4"},
 					http.CanonicalHeaderKey("X-Forwarded-For"): []string{"2.2.2.2"},
 				},
 			},
