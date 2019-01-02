@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"git.torproject.org/pluggable-transports/goptlib.git"
+	tls "github.com/refraction-networking/utls"
 )
 
 const (
@@ -337,10 +338,7 @@ func acceptLoop(ln *pt.SocksListener) error {
 // configuration.
 func checkProxyURL(u *url.URL) error {
 	if options.HelperAddr == nil {
-		// Without the helper we only support HTTP proxies.
-		if u.Scheme != "http" {
-			return fmt.Errorf("don't understand proxy URL scheme %q", u.Scheme)
-		}
+		return fmt.Errorf("no proxy allowed")
 	} else {
 		// With the helper we can use HTTP and SOCKS (because it is the
 		// browser that does the proxying, not us).
@@ -431,6 +429,41 @@ func main() {
 		if ptInfo.ProxyURL != nil {
 			pt.ProxyDone()
 		}
+	}
+
+	httpTransport.DialContext = nil
+	httpTransport.Dial = func(network, addr string) (net.Conn, error) {
+		panic("disable plaintext")
+	}
+	httpTransport.DialTLS = func(network, addr string) (net.Conn, error) {
+		if httpTransport.TLSClientConfig != nil {
+			return nil, fmt.Errorf("error: non-nil TLSClientConfig")
+		}
+		config := &tls.Config{}
+
+		colonPos := strings.LastIndex(addr, ":")
+		if colonPos == -1 {
+			colonPos = len(addr)
+		}
+		config.ServerName = addr[:colonPos]
+
+		conn, err := net.Dial(network, addr)
+		if err != nil {
+			return nil, err
+		}
+		uconn := tls.UClient(conn, config, tls.HelloChrome_Auto)
+		// We cannot call uconn.Handshake() here: it causes the server
+		// to use HTTP/2, when the client is still using HTTP/1.1,
+		// because net/http disables automatic HTTP/2 support when using
+		// DialTLS.
+		// https://github.com/golang/go/issues/21753
+		// "Auto-HTTP/2 is disabled by DialTLS being set"
+		// https://github.com/golang/go/issues/21336
+		// But: returning without calling uconn.Handshake causes the
+		// ClientHello to lack the ALPN extension entirely...
+		//
+		// err = uconn.Handshake()
+		return uconn, err
 	}
 
 	listeners := make([]net.Listener, 0)
