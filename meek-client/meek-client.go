@@ -451,18 +451,8 @@ func main() {
 		if err != nil {
 			return nil, err
 		}
-		uconn := tls.UClient(conn, config, tls.HelloChrome_Auto)
-		// We cannot call uconn.Handshake() here: it causes the server
-		// to use HTTP/2, when the client is still using HTTP/1.1,
-		// because net/http disables automatic HTTP/2 support when using
-		// DialTLS.
-		// https://github.com/golang/go/issues/21753
-		// "Auto-HTTP/2 is disabled by DialTLS being set"
-		// https://github.com/golang/go/issues/21336
-		// But: returning without calling uconn.Handshake causes the
-		// ClientHello to lack the ALPN extension entirely...
-		//
-		// err = uconn.Handshake()
+		uconn := tls.UClient(conn, config, tls.HelloRandomizedNoALPN)
+		err = uconn.Handshake()
 		return uconn, err
 	}
 
