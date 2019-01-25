@@ -126,6 +126,9 @@ func makeRoundTripper(req *http.Request, clientHelloID *utls.ClientHelloID) (htt
 	}
 	cfg := &utls.Config{ServerName: req.URL.Hostname()}
 	bootstrapConn, err := dialUTLS("tcp", addr, cfg, clientHelloID)
+	if err != nil {
+		return nil, err
+	}
 
 	// Peek at what protocol we negotiated.
 	protocol := bootstrapConn.ConnectionState().NegotiatedProtocol
