@@ -54,6 +54,149 @@ Front domain name\&. If provided, this domain name will replace the domain name 
 \fBurl\fR
 in the DNS request and TLS SNI field\&. The URL\(cqs true domain name will still appear in the Host header of HTTP requests\&.
 .RE
+.PP
+\fButls\fR=\fICLIENTHELLOID\fR
+.RS 4
+Use the
+uTLS library
+with the named TLS fingerprint for TLS camouflage\&. This arg is incompatible with the
+\fB\-\-helper\fR
+command line option\&. The possible values of
+\fICLIENTHELLOID\fR
+are:
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloRandomizedALPN
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloRandomizedNoALPN
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloFirefox_55
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloFirefox_56
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloFirefox_63
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloFirefox_Auto
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloChrome_58
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloChrome_62
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloChrome_70
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloChrome_Auto
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloIOS_11_1
+.RE
+.sp
+.RS 4
+.ie n \{\
+\h'-04'\(bu\h'+03'\c
+.\}
+.el \{\
+.sp -1
+.IP \(bu 2.3
+.\}
+HelloIOS_Auto
+.RE
+.RE
 .sp
 For backward compatibility, each SOCKS arg also has an equivalent command line option\&. For example, this configuration using SOCKS args:
 .sp
@@ -101,7 +244,7 @@ Socks5Proxy localhost:1080
 .sp
 or, equivalently, using the \fB\-\-proxy\fR command line option\&. The command line option takes precedence\&.
 .sp
-When the \fB\-\-helper\fR option is used, you can use proxies of type http, socks4a, or socks5\&. Without \fB\-\-helper\fR, you can use proxies of type http, https, or socks5\&.
+When the \fB\-\-helper\fR option is used, you can use proxies of type http, socks4a, or socks5\&. Without \fB\-\-helper\fR and with \fButls\fR, you cannot use a proxy\&. Without \fB\-\-helper\fR and without \fButls\fR, you can use proxies of type http, https, or socks5\&.
 .SH "OPTIONS"
 .PP
 \fB\-\-front\fR=\fIDOMAIN\fR
@@ -139,6 +282,14 @@ Name of a file to write log messages to (default stderr)\&.
 URL to correspond with\&. Prefer using the
 \fBurl\fR
 SOCKS arg on a bridge line over using this command line option\&.
+.RE
+.PP
+\fB\-\-utls\fR=\fICLIENTHELLOID\fR
+.RS 4
+Use uTLS with the given TLS fingerprint for TLS camouflage\&. This option is incompatible with
+\fB\-\-helper\fR\&. Prefer using the
+\fButls\fR
+SOCKS arg over using this command line option\&.
 .RE
 .PP
 \fB\-h\fR, \fB\-\-help\fR
