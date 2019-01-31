@@ -208,8 +208,8 @@ func makeRoundTripper(req *http.Request, clientHelloID *utls.ClientHelloID) (htt
 
 var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	// No HelloCustom: not useful for external configuration.
-	// No HelloGolang: just don't use uTLS.
 	// No HelloRandomized: doesn't negotiate consistent ALPN.
+	"hellogolang":           nil, // special case: disable uTLS
 	"hellorandomizedalpn":   &utls.HelloRandomizedALPN,
 	"hellorandomizednoalpn": &utls.HelloRandomizedNoALPN,
 	"hellofirefox_auto":     &utls.HelloFirefox_Auto,
@@ -224,11 +224,15 @@ var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	"helloios_11_1":         &utls.HelloIOS_11_1,
 }
 
-func NewUTLSRoundTripper(name string) (*UTLSRoundTripper, error) {
+func NewUTLSRoundTripper(name string) (http.RoundTripper, error) {
 	// Lookup is case-insensitive.
 	clientHelloID, ok := clientHelloIDMap[strings.ToLower(name)]
 	if !ok {
 		return nil, fmt.Errorf("no uTLS Client Hello ID named %q", name)
+	}
+	if clientHelloID == nil {
+		// Special case for HelloGolang.
+		return httpRoundTripper, nil
 	}
 	return &UTLSRoundTripper{
 		clientHelloID: clientHelloID,

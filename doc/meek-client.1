@@ -2,12 +2,12 @@
 .\"     Title: meek-client
 .\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 01/25/2019
+.\"      Date: 01/31/2019
 .\"    Manual: \ \&
 .\"    Source: \ \&
 .\"  Language: English
 .\"
-.TH "MEEK\-CLIENT" "1" "01/25/2019" "\ \&" "\ \&"
+.TH "MEEK\-CLIENT" "1" "01/31/2019" "\ \&" "\ \&"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -196,6 +196,10 @@ HelloIOS_11_1
 .\}
 HelloIOS_Auto
 .RE
+.sp
+As a special case, the value HelloGolang is recognized as an alias for omitting the
+\fButls\fR
+SOCKS arg; i\&.e\&., use native Go TLS\&.
 .RE
 .sp
 For backward compatibility, each SOCKS arg also has an equivalent command line option\&. For example, this configuration using SOCKS args:
