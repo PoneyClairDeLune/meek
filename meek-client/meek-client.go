@@ -79,9 +79,9 @@ const (
 	helperWriteTimeout      = 2 * time.Second
 )
 
-// We use this RoundTripper to make all our requests when --helper is not
-// in effect. We use the defaults, except we take control of the Proxy setting
-// (notably, disabling the default ProxyFromEnvironment).
+// We use this RoundTripper to make all our requests when neither --helper nor
+// utls is in effect. We use the defaults, except we take control of the Proxy
+// setting (notably, disabling the default ProxyFromEnvironment).
 var httpRoundTripper *http.Transport = http.DefaultTransport.(*http.Transport)
 
 // We use this RoundTripper when --helper is in effect.
