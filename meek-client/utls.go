@@ -39,12 +39,32 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/http2"
 )
+
+// Copy the public fields (fields for which CanSet is true) from src to dst.
+// src and dst must be pointers to the same type. We use this to make copies of
+// httpRoundTripper. We cannot use struct assignment, because http.Transport
+// contains private mutexes. The idea of using reflection to copy only the
+// public fields comes from a post by Nick Craig-Wood:
+// https://groups.google.com/d/msg/Golang-Nuts/SDiGYNVE8iY/89hRKTF4BAAJ
+func copyPublicFields(dst, src interface{}) {
+	if reflect.TypeOf(dst) != reflect.TypeOf(src) {
+		panic("unequal types")
+	}
+	dstValue := reflect.ValueOf(dst).Elem()
+	srcValue := reflect.ValueOf(src).Elem()
+	for i := 0; i < dstValue.NumField(); i++ {
+		if dstValue.Field(i).CanSet() {
+			dstValue.Field(i).Set(srcValue.Field(i))
+		}
+	}
+}
 
 // Extract a host:port address from a URL, suitable for passing to net.Dial.
 func addrForDial(url *url.URL) (string, error) {
@@ -164,6 +184,10 @@ func makeRoundTripper(req *http.Request, clientHelloID *utls.ClientHelloID) (htt
 	// Construct an http.Transport or http2.Transport depending on ALPN.
 	switch protocol {
 	case http2.NextProtoTLS:
+		// Unfortunately http2.Transport does not expose the same
+		// configuration options as http.Transport with regard to
+		// timeouts, etc., so we are at the mercy of the defaults.
+		// https://github.com/golang/go/issues/16581
 		return &http2.Transport{
 			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
 				// Ignore the *tls.Config parameter; use our
@@ -172,8 +196,13 @@ func makeRoundTripper(req *http.Request, clientHelloID *utls.ClientHelloID) (htt
 			},
 		}, nil
 	default:
-		// TODO: copy public fields from httpRoundTripper?
-		return &http.Transport{DialTLS: dialTLS}, nil
+		// With http.Transport, copy important default fields from
+		// http.DefaultTransport, such as TLSHandshakeTimeout and
+		// IdleConnTimeout.
+		tr := &http.Transport{}
+		copyPublicFields(tr, httpRoundTripper)
+		tr.DialTLS = dialTLS
+		return tr, nil
 	}
 }
 
