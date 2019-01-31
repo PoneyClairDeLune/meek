@@ -64,7 +64,8 @@ The possible values of __CLIENTHELLOID__ are:
 - HelloIOS_11_1
 - HelloIOS_Auto
 
-As a special case, the value HelloGolang is recognized as an alias for
+As a special case, the values "none" and "HelloGolang"
+are recognized as aliases for
 omitting the **utls** SOCKS arg; i.e., use native Go TLS.
 --
 
