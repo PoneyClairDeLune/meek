@@ -2,11 +2,20 @@ package main
 
 import (
 	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
+	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
 )
 
@@ -66,14 +75,8 @@ func TestAddrForDial(t *testing.T) {
 
 // Dial the given address with the given proxy, and return the http.Request that
 // the proxy server would have received.
-func requestResultingFromDial(makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
+func requestResultingFromDial(ln net.Listener, makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
 	ch := make(chan *http.Request, 1)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, err
-	}
-	defer ln.Close()
 
 	go func() {
 		defer func() {
@@ -102,9 +105,18 @@ func requestResultingFromDial(makeProxy func(addr net.Addr) (*httpProxy, error),
 	return <-ch, nil
 }
 
+func requestResultingFromDialHTTP(makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	defer ln.Close()
+	return requestResultingFromDial(ln, makeProxy, network, addr)
+}
+
 // Test that the HTTP proxy client sends a correct request.
 func TestProxyHTTPCONNECT(t *testing.T) {
-	req, err := requestResultingFromDial(func(addr net.Addr) (*httpProxy, error) {
+	req, err := requestResultingFromDialHTTP(func(addr net.Addr) (*httpProxy, error) {
 		return ProxyHTTP("tcp", addr.String(), nil, proxy.Direct)
 	}, "tcp", testAddr)
 	if err != nil {
@@ -127,7 +139,7 @@ func TestProxyHTTPProxyAuthorization(t *testing.T) {
 		User:     testUsername,
 		Password: testPassword,
 	}
-	req, err := requestResultingFromDial(func(addr net.Addr) (*httpProxy, error) {
+	req, err := requestResultingFromDialHTTP(func(addr net.Addr) (*httpProxy, error) {
 		return ProxyHTTP("tcp", addr.String(), auth, proxy.Direct)
 	}, "tcp", testAddr)
 	if err != nil {
@@ -154,5 +166,67 @@ func TestProxyHTTPProxyAuthorization(t *testing.T) {
 	}
 	if password != testPassword {
 		t.Errorf("expected password %q, got %q", testPassword, password)
+	}
+}
+
+func requestResultingFromDialHTTPS(makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
+	// Create a TLS listener using a temporary self-signed certificate.
+	// https://golang.org/src/crypto/tls/generate_cert.go
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	notBefore := time.Now()
+	notAfter := notBefore.Add(100 * time.Second)
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(123),
+		Subject: pkix.Name{
+			Organization: []string{"Test"},
+		},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		IsCA:                  true,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	cert, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return nil, err
+	}
+	config := tls.Config{
+		Certificates: []tls.Certificate{
+			tls.Certificate{
+				Certificate: [][]byte{cert},
+				PrivateKey:  priv,
+			},
+		},
+	}
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &config)
+	if err != nil {
+		return nil, err
+	}
+	defer ln.Close()
+	return requestResultingFromDial(ln, makeProxy, network, addr)
+}
+
+func TestProxyHTTPSCONNECT(t *testing.T) {
+	req, err := requestResultingFromDialHTTPS(func(addr net.Addr) (*httpProxy, error) {
+		return ProxyHTTPS("tcp", addr.String(), nil, proxy.Direct, &utls.Config{InsecureSkipVerify: true}, &utls.HelloFirefox_Auto)
+	}, "tcp", testAddr)
+	if err != nil {
+		panic(err)
+	}
+	if req.Method != "CONNECT" {
+		t.Errorf("expected method %q, got %q", "CONNECT", req.Method)
+	}
+	if req.URL.Hostname() != testHost || req.URL.Port() != testPort {
+		t.Errorf("expected URL %q, got %q", testAddr, req.URL.String())
+	}
+	if req.Host != testAddr {
+		t.Errorf("expected %q, got %q", "Host: "+req.Host, "Host: "+testAddr)
 	}
 }
