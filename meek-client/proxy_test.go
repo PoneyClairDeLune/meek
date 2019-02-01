@@ -1,9 +1,20 @@
 package main
 
 import (
+	"bufio"
+	"net"
+	"net/http"
 	"net/url"
 	"testing"
+
+	"golang.org/x/net/proxy"
 )
+
+const testHost = "test.example"
+const testPort = "1234"
+const testAddr = testHost + ":" + testPort
+const testUsername = "username"
+const testPassword = "password"
 
 // Test that addrForDial returns a numeric port number. It needs to be numeric
 // because we pass it as part of the authority-form URL in HTTP proxy requests.
@@ -50,5 +61,98 @@ func TestAddrForDial(t *testing.T) {
 			t.Errorf("%q → %q, expected error", input, addr)
 			continue
 		}
+	}
+}
+
+// Dial the given address with the given proxy, and return the http.Request that
+// the proxy server would have received.
+func requestResultingFromDial(makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
+	ch := make(chan *http.Request, 1)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	defer ln.Close()
+
+	go func() {
+		defer func() {
+			close(ch)
+		}()
+		conn, err := ln.Accept()
+		if err != nil {
+			panic(err)
+		}
+		defer conn.Close()
+		br := bufio.NewReader(conn)
+		req, err := http.ReadRequest(br)
+		if err != nil {
+			panic(err)
+		}
+		ch <- req
+	}()
+
+	pr, err := makeProxy(ln.Addr())
+	if err != nil {
+		return nil, err
+	}
+	// The Dial fails because the goroutine "server" hangs up.
+	_, _ = pr.Dial(network, addr)
+
+	return <-ch, nil
+}
+
+// Test that the HTTP proxy client sends a correct request.
+func TestProxyHTTPCONNECT(t *testing.T) {
+	req, err := requestResultingFromDial(func(addr net.Addr) (*httpProxy, error) {
+		return ProxyHTTP("tcp", addr.String(), nil, proxy.Direct)
+	}, "tcp", testAddr)
+	if err != nil {
+		panic(err)
+	}
+	if req.Method != "CONNECT" {
+		t.Errorf("expected method %q, got %q", "CONNECT", req.Method)
+	}
+	if req.URL.Hostname() != testHost || req.URL.Port() != testPort {
+		t.Errorf("expected URL %q, got %q", testAddr, req.URL.String())
+	}
+	if req.Host != testAddr {
+		t.Errorf("expected %q, got %q", "Host: "+req.Host, "Host: "+testAddr)
+	}
+}
+
+// Test that the HTTP proxy client sends authorization credentials.
+func TestProxyHTTPProxyAuthorization(t *testing.T) {
+	auth := &proxy.Auth{
+		User:     testUsername,
+		Password: testPassword,
+	}
+	req, err := requestResultingFromDial(func(addr net.Addr) (*httpProxy, error) {
+		return ProxyHTTP("tcp", addr.String(), auth, proxy.Direct)
+	}, "tcp", testAddr)
+	if err != nil {
+		panic(err)
+	}
+	pa := req.Header.Get("Proxy-Authorization")
+	if pa == "" {
+		t.Fatalf("didn't get a Proxy-Authorization header")
+	}
+	// The standard library Request.BasicAuth does parsing of basic
+	// authentication, but only in the Authorization header, not
+	// Proxy-Authorization.
+	newReq := &http.Request{
+		Header: http.Header{
+			"Authorization": []string{pa},
+		},
+	}
+	username, password, ok := newReq.BasicAuth()
+	if !ok {
+		panic("shouldn't fail")
+	}
+	if username != testUsername {
+		t.Errorf("expected username %q, got %q", testUsername, username)
+	}
+	if password != testPassword {
+		t.Errorf("expected password %q, got %q", testPassword, password)
 	}
 }
