@@ -74,10 +74,13 @@ func addrForDial(url *url.URL) (string, error) {
 	// internationalized domain name to ASCII.
 	port := url.Port()
 	if port == "" {
-		// No port? Use the default for the scheme. We only care about https.
-		if url.Scheme == "https" {
-			port = "https"
-		} else {
+		// No port? Use the default for the scheme.
+		switch url.Scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		default:
 			return "", fmt.Errorf("unsupported URL scheme %q", url.Scheme)
 		}
 	}
