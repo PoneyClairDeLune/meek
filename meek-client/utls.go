@@ -45,6 +45,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/http2"
+	"golang.org/x/net/proxy"
 )
 
 // Copy the public fields (fields for which CanSet is true) from src to dst.
@@ -85,12 +86,8 @@ func addrForDial(url *url.URL) (string, error) {
 
 // Analogous to tls.Dial. Connect to the given address and initiate a TLS
 // handshake using the given ClientHelloID, returning the resulting connection.
-func dialUTLS(network, addr string, cfg *utls.Config, clientHelloID *utls.ClientHelloID) (*utls.UConn, error) {
-	if options.ProxyURL != nil {
-		return nil, fmt.Errorf("no proxy allowed with uTLS")
-	}
-
-	conn, err := net.Dial(network, addr)
+func dialUTLS(network, addr string, cfg *utls.Config, clientHelloID *utls.ClientHelloID, forward proxy.Dialer) (*utls.UConn, error) {
+	conn, err := forward.Dial(network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +113,7 @@ type UTLSRoundTripper struct {
 
 	clientHelloID *utls.ClientHelloID
 	config        *utls.Config
+	proxyDialer   proxy.Dialer
 	rt            http.RoundTripper
 }
 
@@ -136,7 +134,7 @@ func (rt *UTLSRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		// On the first call, make an http.Transport or http2.Transport
 		// as appropriate.
 		var err error
-		rt.rt, err = makeRoundTripper(req.URL, rt.clientHelloID, rt.config)
+		rt.rt, err = makeRoundTripper(req.URL, rt.clientHelloID, rt.config, rt.proxyDialer)
 		if err != nil {
 			return nil, err
 		}
@@ -145,16 +143,48 @@ func (rt *UTLSRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return rt.rt.RoundTrip(req)
 }
 
-func makeRoundTripper(url *url.URL, clientHelloID *utls.ClientHelloID, cfg *utls.Config) (http.RoundTripper, error) {
+func makeProxyDialer(proxyURL *url.URL) (proxy.Dialer, error) {
+	var proxyDialer proxy.Dialer = proxy.Direct
+	if proxyURL == nil {
+		return proxyDialer, nil
+	}
+
+	proxyAddr, err := addrForDial(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+
+	var auth *proxy.Auth
+	if userpass := proxyURL.User; userpass != nil {
+		auth = &proxy.Auth{
+			User: userpass.Username(),
+		}
+		if password, ok := userpass.Password(); ok {
+			auth.Password = password
+		}
+	}
+
+	switch proxyURL.Scheme {
+	case "socks5":
+		proxyDialer, err = proxy.SOCKS5("tcp", proxyAddr, auth, proxyDialer)
+	default:
+		return nil, fmt.Errorf("cannot use proxy scheme %q with uTLS", proxyURL.Scheme)
+	}
+
+	return proxyDialer, err
+}
+
+func makeRoundTripper(url *url.URL, clientHelloID *utls.ClientHelloID, cfg *utls.Config, proxyDialer proxy.Dialer) (http.RoundTripper, error) {
 	addr, err := addrForDial(url)
 	if err != nil {
 		return nil, err
 	}
 
-	// Connect to the given address and initiate a TLS handshake using
-	// the given ClientHelloID. Return the resulting connection.
+	// Connect to the given address, through a proxy if requested, and
+	// initiate a TLS handshake using the given ClientHelloID. Return the
+	// resulting connection.
 	dial := func(network, addr string) (*utls.UConn, error) {
-		return dialUTLS(network, addr, cfg, clientHelloID)
+		return dialUTLS(network, addr, cfg, clientHelloID, proxyDialer)
 	}
 
 	bootstrapConn, err := dial("tcp", addr)
@@ -237,7 +267,7 @@ var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	"helloios_11_1":         &utls.HelloIOS_11_1,
 }
 
-func NewUTLSRoundTripper(name string, cfg *utls.Config) (http.RoundTripper, error) {
+func NewUTLSRoundTripper(name string, cfg *utls.Config, proxyURL *url.URL) (http.RoundTripper, error) {
 	// Lookup is case-insensitive.
 	clientHelloID, ok := clientHelloIDMap[strings.ToLower(name)]
 	if !ok {
@@ -247,8 +277,13 @@ func NewUTLSRoundTripper(name string, cfg *utls.Config) (http.RoundTripper, erro
 		// Special case for "none" and HelloGolang.
 		return httpRoundTripper, nil
 	}
+	proxyDialer, err := makeProxyDialer(proxyURL)
+	if err != nil {
+		return nil, err
+	}
 	return &UTLSRoundTripper{
 		clientHelloID: clientHelloID,
 		config:        cfg,
+		proxyDialer:   proxyDialer,
 	}, nil
 }
