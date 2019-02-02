@@ -323,7 +323,7 @@ func handler(conn *pt.SocksConn) error {
 		}
 		info.RoundTripper = helperRoundTripper
 	} else if utlsOK {
-		info.RoundTripper, err = NewUTLSRoundTripper(utlsName)
+		info.RoundTripper, err = NewUTLSRoundTripper(utlsName, nil)
 		if err != nil {
 			return err
 		}

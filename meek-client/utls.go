@@ -94,7 +94,12 @@ func dialUTLS(network, addr string, cfg *utls.Config, clientHelloID *utls.Client
 	if err != nil {
 		return nil, err
 	}
+	serverName, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
 	uconn := utls.UClient(conn, cfg, *clientHelloID)
+	uconn.SetSNI(serverName)
 	err = uconn.Handshake()
 	if err != nil {
 		return nil, err
@@ -110,6 +115,7 @@ type UTLSRoundTripper struct {
 	sync.Mutex
 
 	clientHelloID *utls.ClientHelloID
+	config        *utls.Config
 	rt            http.RoundTripper
 }
 
@@ -130,7 +136,7 @@ func (rt *UTLSRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		// On the first call, make an http.Transport or http2.Transport
 		// as appropriate.
 		var err error
-		rt.rt, err = makeRoundTripper(req, rt.clientHelloID)
+		rt.rt, err = makeRoundTripper(req, rt.clientHelloID, rt.config)
 		if err != nil {
 			return nil, err
 		}
@@ -139,13 +145,19 @@ func (rt *UTLSRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return rt.rt.RoundTrip(req)
 }
 
-func makeRoundTripper(req *http.Request, clientHelloID *utls.ClientHelloID) (http.RoundTripper, error) {
+func makeRoundTripper(req *http.Request, clientHelloID *utls.ClientHelloID, cfg *utls.Config) (http.RoundTripper, error) {
 	addr, err := addrForDial(req.URL)
 	if err != nil {
 		return nil, err
 	}
-	cfg := &utls.Config{ServerName: req.URL.Hostname()}
-	bootstrapConn, err := dialUTLS("tcp", addr, cfg, clientHelloID)
+
+	// Connect to the given address and initiate a TLS handshake using
+	// the given ClientHelloID. Return the resulting connection.
+	dial := func(network, addr string) (*utls.UConn, error) {
+		return dialUTLS(network, addr, cfg, clientHelloID)
+	}
+
+	bootstrapConn, err := dial("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +181,7 @@ func makeRoundTripper(req *http.Request, clientHelloID *utls.ClientHelloID) (htt
 		}
 
 		// Later dials make a new connection.
-		uconn, err := dialUTLS(network, addr, cfg, clientHelloID)
+		uconn, err := dial(network, addr)
 		if err != nil {
 			return nil, err
 		}
@@ -225,7 +237,7 @@ var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	"helloios_11_1":         &utls.HelloIOS_11_1,
 }
 
-func NewUTLSRoundTripper(name string) (http.RoundTripper, error) {
+func NewUTLSRoundTripper(name string, cfg *utls.Config) (http.RoundTripper, error) {
 	// Lookup is case-insensitive.
 	clientHelloID, ok := clientHelloIDMap[strings.ToLower(name)]
 	if !ok {
@@ -237,5 +249,6 @@ func NewUTLSRoundTripper(name string) (http.RoundTripper, error) {
 	}
 	return &UTLSRoundTripper{
 		clientHelloID: clientHelloID,
+		config:        cfg,
 	}, nil
 }
