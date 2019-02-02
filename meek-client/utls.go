@@ -136,7 +136,7 @@ func (rt *UTLSRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		// On the first call, make an http.Transport or http2.Transport
 		// as appropriate.
 		var err error
-		rt.rt, err = makeRoundTripper(req, rt.clientHelloID, rt.config)
+		rt.rt, err = makeRoundTripper(req.URL, rt.clientHelloID, rt.config)
 		if err != nil {
 			return nil, err
 		}
@@ -145,8 +145,8 @@ func (rt *UTLSRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	return rt.rt.RoundTrip(req)
 }
 
-func makeRoundTripper(req *http.Request, clientHelloID *utls.ClientHelloID, cfg *utls.Config) (http.RoundTripper, error) {
-	addr, err := addrForDial(req.URL)
+func makeRoundTripper(url *url.URL, clientHelloID *utls.ClientHelloID, cfg *utls.Config) (http.RoundTripper, error) {
+	addr, err := addrForDial(url)
 	if err != nil {
 		return nil, err
 	}
