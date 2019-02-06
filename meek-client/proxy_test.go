@@ -176,9 +176,9 @@ func TestProxyHTTPProxyAuthorization(t *testing.T) {
 	}
 }
 
-func requestResultingFromDialHTTPS(t *testing.T, makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
-	// Create a TLS listener using a temporary self-signed certificate.
-	// https://golang.org/src/crypto/tls/generate_cert.go
+// Create a TLS listener using a temporary self-signed certificate.
+// https://golang.org/src/crypto/tls/generate_cert.go
+func selfSignedTLSListen(network, addr string) (net.Listener, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -212,7 +212,11 @@ func requestResultingFromDialHTTPS(t *testing.T, makeProxy func(addr net.Addr) (
 		},
 	}
 
-	ln, err := tls.Listen("tcp", "127.0.0.1:0", &config)
+	return tls.Listen(network, addr, &config)
+}
+
+func requestResultingFromDialHTTPS(t *testing.T, makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
+	ln, err := selfSignedTLSListen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
