@@ -75,7 +75,7 @@ func TestAddrForDial(t *testing.T) {
 
 // Dial the given address with the given proxy, and return the http.Request that
 // the proxy server would have received.
-func requestResultingFromDial(ln net.Listener, makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
+func requestResultingFromDial(t *testing.T, ln net.Listener, makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
 	ch := make(chan *http.Request, 1)
 
 	go func() {
@@ -84,13 +84,15 @@ func requestResultingFromDial(ln net.Listener, makeProxy func(addr net.Addr) (*h
 		}()
 		conn, err := ln.Accept()
 		if err != nil {
-			panic(err)
+			t.Error(err)
+			return
 		}
 		defer conn.Close()
 		br := bufio.NewReader(conn)
 		req, err := http.ReadRequest(br)
 		if err != nil {
-			panic(err)
+			t.Error(err)
+			return
 		}
 		ch <- req
 	}()
@@ -105,18 +107,18 @@ func requestResultingFromDial(ln net.Listener, makeProxy func(addr net.Addr) (*h
 	return <-ch, nil
 }
 
-func requestResultingFromDialHTTP(makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
+func requestResultingFromDialHTTP(t *testing.T, makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
 	defer ln.Close()
-	return requestResultingFromDial(ln, makeProxy, network, addr)
+	return requestResultingFromDial(t, ln, makeProxy, network, addr)
 }
 
 // Test that the HTTP proxy client sends a correct request.
 func TestProxyHTTPCONNECT(t *testing.T) {
-	req, err := requestResultingFromDialHTTP(func(addr net.Addr) (*httpProxy, error) {
+	req, err := requestResultingFromDialHTTP(t, func(addr net.Addr) (*httpProxy, error) {
 		return ProxyHTTP("tcp", addr.String(), nil, proxy.Direct)
 	}, "tcp", testAddr)
 	if err != nil {
@@ -139,7 +141,7 @@ func TestProxyHTTPProxyAuthorization(t *testing.T) {
 		User:     testUsername,
 		Password: testPassword,
 	}
-	req, err := requestResultingFromDialHTTP(func(addr net.Addr) (*httpProxy, error) {
+	req, err := requestResultingFromDialHTTP(t, func(addr net.Addr) (*httpProxy, error) {
 		return ProxyHTTP("tcp", addr.String(), auth, proxy.Direct)
 	}, "tcp", testAddr)
 	if err != nil {
@@ -169,7 +171,7 @@ func TestProxyHTTPProxyAuthorization(t *testing.T) {
 	}
 }
 
-func requestResultingFromDialHTTPS(makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
+func requestResultingFromDialHTTPS(t *testing.T, makeProxy func(addr net.Addr) (*httpProxy, error), network, addr string) (*http.Request, error) {
 	// Create a TLS listener using a temporary self-signed certificate.
 	// https://golang.org/src/crypto/tls/generate_cert.go
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -210,11 +212,11 @@ func requestResultingFromDialHTTPS(makeProxy func(addr net.Addr) (*httpProxy, er
 		return nil, err
 	}
 	defer ln.Close()
-	return requestResultingFromDial(ln, makeProxy, network, addr)
+	return requestResultingFromDial(t, ln, makeProxy, network, addr)
 }
 
 func TestProxyHTTPSCONNECT(t *testing.T) {
-	req, err := requestResultingFromDialHTTPS(func(addr net.Addr) (*httpProxy, error) {
+	req, err := requestResultingFromDialHTTPS(t, func(addr net.Addr) (*httpProxy, error) {
 		return ProxyHTTPS("tcp", addr.String(), nil, proxy.Direct, &utls.Config{InsecureSkipVerify: true}, &utls.HelloFirefox_Auto)
 	}, "tcp", testAddr)
 	if err != nil {
