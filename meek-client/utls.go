@@ -94,12 +94,14 @@ func dialUTLS(network, addr string, cfg *utls.Config, clientHelloID *utls.Client
 	if err != nil {
 		return nil, err
 	}
-	serverName, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
 	uconn := utls.UClient(conn, cfg, *clientHelloID)
-	uconn.SetSNI(serverName)
+	if cfg == nil || cfg.ServerName == "" {
+		serverName, _, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		uconn.SetSNI(serverName)
+	}
 	err = uconn.Handshake()
 	if err != nil {
 		return nil, err
