@@ -46,6 +46,29 @@ func TestCopyPublicFieldsHTTPTransport(t *testing.T) {
 	}
 }
 
+// Test that the name lookup of NewUTLSRoundTripper is case-insensitive.
+func TestNewUTLSRoundTripperCase(t *testing.T) {
+	mixed, err := NewUTLSRoundTripper("HelloFirefox_Auto", nil, nil)
+	if err != nil {
+		t.Fatalf("error on %q: %v", "HelloFirefox_Auto", err)
+	}
+	upper, err := NewUTLSRoundTripper("HELLOFIREFOX_AUTO", nil, nil)
+	if err != nil {
+		t.Fatalf("error on %q: %v", "HELLOFIREFOX_AUTO", err)
+	}
+	lower, err := NewUTLSRoundTripper("hellofirefox_auto", nil, nil)
+	if err != nil {
+		t.Fatalf("error on %q: %v", "hellofirefox_auto", err)
+	}
+	if mixed.(*UTLSRoundTripper).clientHelloID != upper.(*UTLSRoundTripper).clientHelloID ||
+		upper.(*UTLSRoundTripper).clientHelloID != lower.(*UTLSRoundTripper).clientHelloID {
+		t.Fatalf("mismatch %p %p %p",
+			mixed.(*UTLSRoundTripper).clientHelloID,
+			upper.(*UTLSRoundTripper).clientHelloID,
+			lower.(*UTLSRoundTripper).clientHelloID)
+	}
+}
+
 // Return a byte slice which is the ClientHello sent when rt does a RoundTrip.
 // Opens a temporary listener on an ephemeral port on localhost. The host you
 // provide can be an IP address like "127.0.0.1" or a name like "localhost", but
@@ -98,6 +121,53 @@ func clientHelloResultingFromRoundTrip(t *testing.T, host string, rt *UTLSRoundT
 	}
 
 	return <-ch, nil
+}
+
+// Test that a uTLS RoundTripper actually does something to the TLS Client
+// Hello. We don't check all the ClientHelloIDs; this is just a guard against a
+// catastrophic incompatibility or something else that makes uTLS stop working.
+func TestUTLSClientHello(t *testing.T) {
+	// We use HelloIOS_11_1 because its lengthy ALPN means we will not
+	// confuse it with a native Go fingerprint, and lack of GREASE means we
+	// do not have to account for many variations.
+	rt, err := NewUTLSRoundTripper("HelloIOS_11_1", &utls.Config{InsecureSkipVerify: true, ServerName: "localhost"}, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	buf, err := clientHelloResultingFromRoundTrip(t, "127.0.0.1", rt.(*UTLSRoundTripper))
+	// A poor man's regexp matching because the regexp package only works on
+	// UTF-8–encoded strings, not arbitrary byte slices. Every byte matches
+	// itself, except '.' which matches anything. NB '.' and '\x2e' are the
+	// same.
+	pattern := "" +
+		// Handshake, Client Hello, TLS 1.2, Client Random
+		"\x16\x03\x01\x01\x01\x01\x00\x00\xfd\x03\x03................................" +
+		// Session ID
+		"\x20................................" +
+		// Ciphersuites and compression methods
+		"\x00\x28\xc0\x2c\xc0\x2b\xc0\x24\xc0\x23\xc0\x0a\xc0\x09\xcc\xa9\xc0\x30\xc0\x2f\xc0\x28\xc0\x27\xc0\x14\xc0\x13\xcc\xa8\x00\x9d\x00\x9c\x00\x3d\x00\x3c\x00\x35\x00\x2f\x01\x00" +
+		// Extensions
+		"\x00\x8c\xff\x01\x00\x01\x00" +
+		"\x00\x00\x00\x0e\x00\x0c\x00\x00\x09localhost" +
+		"\x00\x17\x00\x00" +
+		"\x00\x0d\x00\x14\x00\x12\x04\x03\x08\x04\x04\x01\x05\x03\x08\x05\x05\x01\x08\x06\x06\x01\x02\x01" +
+		"\x00\x05\x00\x05\x01\x00\x00\x00\x00" +
+		"\x33\x74\x00\x00" +
+		"\x00\x12\x00\x00" +
+		"\x00\x10\x00\x30\x00\x2e\x02\x68\x32\x05\x68\x32\x2d\x31\x36\x05\x68\x32\x2d\x31\x35\x05\x68\x32\x2d\x31\x34\x08\x73\x70\x64\x79\x2f\x33\x2e\x31\x06\x73\x70\x64\x79\x2f\x33\x08\x68\x74\x74\x70\x2f\x31\x2e\x31" +
+		"\x00\x0b\x00\x02\x01\x00" +
+		"\x00\x0a\x00\x0a\x00\x08\x00\x1d\x00\x17\x00\x18\x00\x19"
+	if len(buf) != len(pattern) {
+		t.Errorf("fingerprint was not as expected: %+q", buf)
+	}
+	for i := 0; i < len(pattern); i++ {
+		a := buf[i]
+		b := pattern[i]
+		if b != '.' && a != b {
+			t.Fatalf("fingerprint mismatch a position %v: %+q", i, buf)
+		}
+	}
 }
 
 func TestUTLSServerName(t *testing.T) {
