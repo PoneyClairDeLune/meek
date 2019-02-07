@@ -265,6 +265,7 @@ func makeRoundTripper(url *url.URL, clientHelloID *utls.ClientHelloID, cfg *utls
 	}
 }
 
+// When you update this map, also update the man page in doc/meek-client.1.txt.
 var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	// No HelloCustom: not useful for external configuration.
 	// No HelloRandomized: doesn't negotiate consistent ALPN.
