@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -101,8 +102,12 @@ func requestResultingFromDial(t *testing.T, ln net.Listener, makeProxy func(addr
 	if err != nil {
 		return nil, err
 	}
-	// The Dial fails because the goroutine "server" hangs up.
-	_, _ = pr.Dial(network, addr)
+	// The Dial fails because the goroutine "server" hangs up. So ignore an
+	// ErrUnexpectedEOF error.
+	_, err = pr.Dial(network, addr)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return nil, err
+	}
 
 	return <-ch, nil
 }
