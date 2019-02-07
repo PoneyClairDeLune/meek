@@ -120,13 +120,17 @@ type UTLSRoundTripper struct {
 	config        *utls.Config
 	proxyDialer   proxy.Dialer
 	rt            http.RoundTripper
+
+	// Transport for HTTP requests, which don't use uTLS.
+	httpRT *http.Transport
 }
 
 func (rt *UTLSRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	switch req.URL.Scheme {
 	case "http":
-		// If http, we don't invoke uTLS; just pass it to the global http.Transport.
-		return httpRoundTripper.RoundTrip(req)
+		// If http, we don't invoke uTLS; just pass it to an ordinary
+		// http.Transport.
+		return rt.httpRT.RoundTrip(req)
 	case "https":
 	default:
 		return nil, fmt.Errorf("unsupported URL scheme %q", req.URL.Scheme)
@@ -295,13 +299,23 @@ func NewUTLSRoundTripper(name string, cfg *utls.Config, proxyURL *url.URL) (http
 		// Special case for "none" and HelloGolang.
 		return httpRoundTripper, nil
 	}
+
 	proxyDialer, err := makeProxyDialer(proxyURL, cfg, clientHelloID)
 	if err != nil {
 		return nil, err
 	}
+
+	// This special-case RoundTripper is used for HTTP requests, which don't
+	// use uTLS but should use the specified proxy.
+	httpRT := &http.Transport{}
+	copyPublicFields(httpRT, httpRoundTripper)
+	httpRT.Proxy = http.ProxyURL(proxyURL)
+
 	return &UTLSRoundTripper{
 		clientHelloID: clientHelloID,
 		config:        cfg,
 		proxyDialer:   proxyDialer,
+		// rt will be set in the first call to RoundTrip.
+		httpRT: httpRT,
 	}, nil
 }
