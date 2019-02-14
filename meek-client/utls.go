@@ -18,7 +18,7 @@
 // on the wrapper, we initiate a uTLS connection (bootstrapConn), then peek at
 // the ALPN-negotiated protocol: if "h2", create an internal http2.Transport;
 // otherwise, create an internal http.Transport. In either case, set DialTLS on
-// the created Transport do a function that dials using uTLS As a special case,
+// the created Transport to a function that dials using uTLS. As a special case,
 // the first time the DialTLS callback is called, it reuses bootstrapConn (the
 // one made to peek at the ALPN), rather than make a new connection.
 //
