@@ -35,14 +35,14 @@ These instructions require Firefox 65.
    This enables the extension to write to stdout.
 
 5. In Firefox, go to about:debugging and click "Load Temporary
-   Add-on...". Find manifest.json file and click Open.
+   Add-on...". Find manifest.json and click Open.
    More information:
        https://developer.mozilla.org/en-US/docs/Tools/about:debugging#Loading_a_temporary_add-on
    In the terminal, you should see a line like this, with a random port
    number in place of XXXX:
        meek-http-helper: listen 127.0.0.1:XXXX
 
-Now the extension is running an ready to start making requests. You can
+Now the extension is running and ready to start making requests. You can
 run "meek-client --helper", passing it the correct port number XXXX:
 	UseBridges 1
 	ClientTransportPlugin meek exec ./meek-client --helper 127.0.0.1:XXXX --log meek-client.log
