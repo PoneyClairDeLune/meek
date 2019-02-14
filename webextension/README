@@ -7,7 +7,7 @@ application runs as a subprocess of the browser; its job is to open a
 localhost socket and act as an intermediary between the extension and
 meek-client, because the extension cannot open a socket by itself.
 
-These instructions require Firefox 55.
+These instructions require Firefox 65.
 
 1. Compile the native application.
        cd native && go build
