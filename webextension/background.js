@@ -180,6 +180,7 @@ async function roundtrip(request) {
 
     try {
         // Set our listener that overrides the headers for this request.
+        // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/webRequest/onBeforeSendHeaders
         browser.webRequest.onBeforeSendHeaders.addListener(
             headersFn,
             {"urls": ["http://*/*", "https://*/*"]},
