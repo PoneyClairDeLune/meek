@@ -226,7 +226,7 @@ func runFirefox() (cmd *exec.Cmd, stdout io.Reader, err error) {
 		return
 	}
 
-	cmd = exec.Command(absFirefoxPath, "--invisible", "-no-remote", "-profile", profilePath)
+	cmd = exec.Command(absFirefoxPath, "--headless", "--no-remote", "--profile", profilePath)
 	osSpecificCommandSetup(cmd)
 	cmd.Stderr = os.Stderr
 	stdout, err = cmd.StdoutPipe()
