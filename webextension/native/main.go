@@ -139,7 +139,7 @@ func writeResponseSpec(w io.Writer, spec *responseSpec) error {
 	}
 
 	length := len(encodedSpec)
-	if uint32(length) > math.MaxUint32 {
+	if uint64(length) > math.MaxUint32 {
 		return fmt.Errorf("response spec is too long to represent: %d", length)
 	}
 	err = binary.Write(w, binary.BigEndian, uint32(length))
@@ -178,7 +178,7 @@ func recvWebExtensionMessage(r io.Reader) ([]byte, error) {
 // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/Native_messaging#App_side
 func sendWebExtensionMessage(w io.Writer, message []byte) error {
 	length := len(message)
-	if uint32(length) > math.MaxUint32 {
+	if uint64(length) > math.MaxUint32 {
 		return fmt.Errorf("WebExtension message is too long to represent: %d", length)
 	}
 	err := binary.Write(w, NativeEndian, uint32(length))
