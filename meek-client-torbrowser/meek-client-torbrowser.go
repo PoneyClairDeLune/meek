@@ -15,6 +15,11 @@
 // executed as given, except that a --helper option is added that points to the
 // port number read from firefox.
 //
+// On Windows, this program assumes that is has exclusive control over the
+// HKEY_CURRENT_USER\SOFTWARE\Mozilla\NativeMessagingHosts\meek.http.helper
+// registry key. It creates the key when run and tries to delete it when
+// exiting.
+//
 // This program proxies stdin and stdout to and from meek-client, so it is
 // actually meek-client that drives the pluggable transport negotiation with
 // tor.
@@ -375,7 +380,13 @@ func main() {
 		log.Print(err)
 		return
 	}
-	defer logKill(firefoxCmd.Process)
+	defer func() {
+		logKill(firefoxCmd.Process)
+		err := uninstallHelperNativeManifest()
+		if err != nil {
+			log.Printf("uninstalling native host manifest: %v", err)
+		}
+	}()
 
 	// Find out the helper's listening address.
 	addrChan := make(chan string)
