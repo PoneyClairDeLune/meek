@@ -30,7 +30,7 @@ These instructions require Firefox 65.
        cp native/meek.http.helper.json ~/.mozilla/native-messaging-hosts/
        # Windows
        Open regedit.exe and create a new registry key:
-         HKEY_LOCAL_MACHINE\SOFTWARE\Mozilla\NativeMessagingHosts\meek.http.helper
+         HKEY_CURRENT_USER\SOFTWARE\Mozilla\NativeMessagingHosts\meek.http.helper
        Set the default value to the path to meek.http.helper.json:
          C:\path\to\meek\webextension\native\meek.http.helper.json
    The meek.http.helper.json file is called the "host manifest" or "app
