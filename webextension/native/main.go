@@ -127,7 +127,7 @@ func recvRequestSpec(r io.Reader) (requestSpec, error) {
 func sendResponseSpec(w io.Writer, spec responseSpec) error {
 	encodedSpec, err := json.Marshal(spec)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	length := len(encodedSpec)
 	if uint64(length) > math.MaxUint32 {
@@ -205,7 +205,7 @@ func roundTrip(req requestSpec, outToBrowserChan chan<- []byte) (responseSpec, e
 		Request: req,
 	})
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	outToBrowserChan <- message
 
