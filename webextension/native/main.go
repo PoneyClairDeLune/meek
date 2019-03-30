@@ -223,7 +223,7 @@ func roundTrip(req requestSpec, outToBrowserChan chan<- []byte) (responseSpec, e
 		requestResponseMapLock.Lock()
 		delete(requestResponseMap, id)
 		requestResponseMapLock.Unlock()
-		err = fmt.Errorf("timed out")
+		err = fmt.Errorf("timed out waiting for browser to reply")
 	}
 	return resp, err
 }
