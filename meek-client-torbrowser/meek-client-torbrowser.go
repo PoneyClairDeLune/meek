@@ -417,12 +417,8 @@ func main() {
 	var wg sync.WaitGroup
 	if firefoxCmd != nil {
 		wg.Add(1)
-	}
-	if meekClientCmd != nil {
-		wg.Add(1)
-	}
-	if firefoxCmd != nil {
 		go func() {
+			defer wg.Done()
 			err := terminateCmd(firefoxCmd)
 			// We terminate Firefox with SIGTERM, so don't log an
 			// error if the exit status is "terminated by SIGTERM."
@@ -436,16 +432,16 @@ func main() {
 			if err != nil {
 				log.Printf("error terminating firefox: %v", err)
 			}
-			wg.Done()
 		}()
 	}
 	if meekClientCmd != nil {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			err := terminatePTCmd(meekClientCmd)
 			if err != nil {
 				log.Printf("error terminating meek-client: %v", err)
 			}
-			wg.Done()
 		}()
 	}
 	wg.Wait()
