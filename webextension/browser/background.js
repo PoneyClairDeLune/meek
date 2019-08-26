@@ -215,7 +215,7 @@ async function roundtrip(params) {
             }
             proxyCalled = true;
 
-            return makeProxyInfo(request.proxy);
+            return makeProxyInfo(params.proxy);
         } finally {
             browser.proxy.onRequest.removeListener(proxyFn);
             proxyUnlock();
