@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	git.torproject.org/pluggable-transports/goptlib.git v1.1.0
+	github.com/lucas-clemente/quic-go v0.14.1
 	github.com/refraction-networking/utls v0.0.0-20190909200633-43c36d3c1f57
 	golang.org/x/crypto v0.0.0-20191206172530-e9b2fee46413
 	golang.org/x/net v0.0.0-20191209160850-c0dbc17a3553

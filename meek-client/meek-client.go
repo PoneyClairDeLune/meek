@@ -27,10 +27,7 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"crypto/rand"
-	"encoding/base64"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"io"
@@ -41,42 +38,27 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"git.torproject.org/pluggable-transports/goptlib.git"
+	"github.com/lucas-clemente/quic-go"
 )
 
 const (
 	ptMethodName = "meek"
-	// A session ID is a randomly generated string that identifies a
-	// long-lived session. We split a TCP stream across multiple HTTP
-	// requests, and those with the same session ID belong to the same
-	// stream.
-	sessionIDLength = 8
-	// The size of the largest chunk of data we will read from the SOCKS
-	// port before forwarding it in a request, and the maximum size of a
-	// body we are willing to handle in a reply.
-	maxPayloadLength = 0x10000
-	// We must poll the server to see if it has anything to send; there is
-	// no way for the server to push data back to us until we send an HTTP
-	// request. When a timer expires, we send a request even if it has an
-	// empty body. The interval starts at this value and then grows.
-	initPollInterval = 100 * time.Millisecond
-	// Maximum polling interval.
-	maxPollInterval = 5 * time.Second
-	// Geometric increase in the polling interval each time we fail to read
-	// data.
-	pollIntervalMultiplier = 1.5
-	// Try an HTTP roundtrip at most this many times.
-	maxTries = 10
-	// Wait this long between retries.
-	retryDelay = 30 * time.Second
 	// Safety limits on interaction with the HTTP helper.
 	maxHelperResponseLength = 10000000
 	helperReadTimeout       = 60 * time.Second
 	helperWriteTimeout      = 2 * time.Second
+
+	// The ALPN field value for the tunnelled QUIC–TLS connection.
+	quicNextProto = "meek-quic"
+	// How long to wait for a handshake to complete at the inner QUIC layer.
+	quicHandshakeTimeout = 30 * time.Second
+	// How long before timing out connections at the inner QUIC layer.
+	quicIdleTimeout = 30 * time.Minute
 )
 
 // We use this RoundTripper to make all our requests when neither --helper nor
@@ -99,12 +81,16 @@ var options struct {
 	UTLSName  string
 }
 
+// urlAddr is a net.Addr representation of a url.URL.
+type urlAddr struct{ *url.URL }
+
+func (addr urlAddr) Network() string { return "url" }
+func (addr urlAddr) String() string  { return addr.URL.String() }
+
 // RequestInfo encapsulates all the configuration used for a request–response
 // roundtrip, including variables that may come from SOCKS args or from the
 // command line.
 type RequestInfo struct {
-	// What to put in the X-Session-ID header.
-	SessionID string
 	// The URL to request.
 	URL *url.URL
 	// The Host header to put in the HTTP request (optional and may be
@@ -115,23 +101,8 @@ type RequestInfo struct {
 	RoundTripper http.RoundTripper
 }
 
-// Make an http.Request from the payload data in buf and the request metadata in
-// info.
-func makeRequest(buf []byte, info *RequestInfo) (*http.Request, error) {
-	var body io.Reader
-	if len(buf) > 0 {
-		// Leave body == nil when buf is empty. A nil body is an
-		// explicit signal that the body is empty. An empty
-		// *bytes.Reader or the magic value http.NoBody are supposed to
-		// be equivalent ways to signal an empty body, but in Go 1.8 the
-		// HTTP/2 code only understands nil. Not leaving body == nil
-		// causes the Content-Length header to be omitted from HTTP/2
-		// requests, which in some cases can cause the server to return
-		// a 411 "Length Required" error. See
-		// https://bugs.torproject.org/22865.
-		body = bytes.NewReader(buf)
-	}
-	req, err := http.NewRequest("POST", info.URL.String(), body)
+func (info *RequestInfo) Poll(out io.Reader) (in io.ReadCloser, err error) {
+	req, err := http.NewRequest("POST", info.URL.String(), out)
 	// Prevent Content-Type sniffing by net/http and middleboxes.
 	req.Header.Set("Content-Type", "application/octet-stream")
 	if err != nil {
@@ -140,150 +111,22 @@ func makeRequest(buf []byte, info *RequestInfo) (*http.Request, error) {
 	if info.Host != "" {
 		req.Host = info.Host
 	}
-	req.Header.Set("X-Session-Id", info.SessionID)
-	return req, nil
-}
-
-// Do a roundtrip, trying at most limit times if there is an HTTP status other
-// than 200. In case all tries result in error, returns the last error seen.
-//
-// Retrying the request immediately is a bit bogus, because we don't know if the
-// remote server received our bytes or not, so we may be sending duplicates,
-// which will cause the connection to die. The alternative, though, is to just
-// kill the connection immediately. A better solution would be a system of
-// acknowledgements so we know what to resend after an error.
-func roundTripRetries(rt http.RoundTripper, req *http.Request, limit int) (*http.Response, error) {
-	var resp *http.Response
-	var err error
-again:
-	limit--
-	resp, err = rt.RoundTrip(req)
-	// Retry only if the HTTP roundtrip completed without error, but
-	// returned a status other than 200. Other kinds of errors and success
-	// with 200 always return immediately.
+	if err != nil {
+		return nil, err
+	}
+	resp, err := info.RoundTripper.RoundTrip(req)
 	if err == nil && resp.StatusCode != http.StatusOK {
-		err = fmt.Errorf("status code was %d, not %d", resp.StatusCode, http.StatusOK)
-		if limit > 0 {
-			log.Printf("%s; trying again after %.f seconds (%d)", err, retryDelay.Seconds(), limit)
-			time.Sleep(retryDelay)
-			goto again
-		}
+		err = fmt.Errorf("status code %d", resp.StatusCode)
 	}
-	return resp, err
-}
-
-// Send the data in buf to the remote URL, wait for a reply, and feed the reply
-// body back into conn.
-func sendRecv(buf []byte, conn net.Conn, info *RequestInfo) (int64, error) {
-	req, err := makeRequest(buf, info)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	resp, err := roundTripRetries(info.RoundTripper, req, maxTries)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	return io.Copy(conn, io.LimitReader(resp.Body, maxPayloadLength))
-}
-
-// Repeatedly read from conn, issue HTTP requests, and write the responses back
-// to conn.
-func copyLoop(conn net.Conn, info *RequestInfo) error {
-	var interval time.Duration
-
-	ch := make(chan []byte)
-
-	// Read from the Conn and send byte slices on the channel.
-	go func() {
-		var buf [maxPayloadLength]byte
-		r := bufio.NewReader(conn)
-		for {
-			n, err := r.Read(buf[:])
-			b := make([]byte, n)
-			copy(b, buf[:n])
-			// log.Printf("read from local: %q", b)
-			ch <- b
-			if err != nil {
-				if err != io.EOF {
-					log.Printf("error reading from local: %s", err)
-				}
-				break
-			}
-		}
-		close(ch)
-	}()
-
-	interval = initPollInterval
-loop:
-	for {
-		var buf []byte
-		var ok bool
-
-		// log.Printf("waiting up to %.2f s", interval.Seconds())
-		// start := time.Now()
-		select {
-		case buf, ok = <-ch:
-			if !ok {
-				break loop
-			}
-			// log.Printf("read %d bytes from local after %.2f s", len(buf), time.Since(start).Seconds())
-		case <-time.After(interval):
-			// log.Printf("read nothing from local after %.2f s", time.Since(start).Seconds())
-			buf = nil
-		}
-
-		nw, err := sendRecv(buf, conn, info)
-		if err != nil {
-			return err
-		}
-		/*
-			if nw > 0 {
-				log.Printf("got %d bytes from remote", nw)
-			} else {
-				log.Printf("got nothing from remote")
-			}
-		*/
-
-		if nw > 0 || len(buf) > 0 {
-			// If we sent or received anything, poll again
-			// immediately.
-			interval = 0
-		} else if interval == 0 {
-			// The first time we don't send or receive anything,
-			// wait a while.
-			interval = initPollInterval
-		} else {
-			// After that, wait a little longer.
-			interval = time.Duration(float64(interval) * pollIntervalMultiplier)
-		}
-		if interval > maxPollInterval {
-			interval = maxPollInterval
-		}
-	}
-
-	return nil
-}
-
-func genSessionID() string {
-	buf := make([]byte, sessionIDLength)
-	_, err := rand.Read(buf)
-	if err != nil {
-		panic(err.Error())
-	}
-	return strings.TrimRight(base64.StdEncoding.EncodeToString(buf), "=")
+	return resp.Body, nil
 }
 
 // Callback for new SOCKS requests.
 func handleSOCKS(conn *pt.SocksConn) error {
-	defer conn.Close()
-	err := conn.Grant(&net.TCPAddr{IP: net.IPv4zero, Port: 0})
-	if err != nil {
-		return err
-	}
-
 	var info RequestInfo
-	info.SessionID = genSessionID()
 
 	// First check url= SOCKS arg, then --url option.
 	urlArg, ok := conn.Req.Args.Get("url")
@@ -293,6 +136,7 @@ func handleSOCKS(conn *pt.SocksConn) error {
 	} else {
 		return fmt.Errorf("no URL for SOCKS request")
 	}
+	var err error
 	info.URL, err = url.Parse(urlArg)
 	if err != nil {
 		return err
@@ -335,7 +179,63 @@ func handleSOCKS(conn *pt.SocksConn) error {
 		info.RoundTripper = httpRoundTripper
 	}
 
-	return copyLoop(conn, &info)
+	// Each SOCKS connection corresponds to a single QUIC session with a
+	// single stream inside it.
+	pconn := NewPollingPacketConn(urlAddr{info.URL}, &info)
+	defer pconn.Close()
+
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: true,
+		NextProtos:         []string{quicNextProto},
+	}
+	quicConfig := &quic.Config{
+		HandshakeTimeout: quicHandshakeTimeout,
+		IdleTimeout:      quicIdleTimeout,
+	}
+	sess, err := quic.Dial(pconn, pconn.RemoteAddr(), "", tlsConfig, quicConfig)
+	if err != nil {
+		return err
+	}
+	defer sess.Close()
+
+	stream, err := sess.OpenStream()
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	err = conn.Grant(&net.TCPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		return err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err := io.Copy(conn, stream)
+		if err != nil {
+			log.Printf("recv error: %v", err)
+		}
+		err = conn.Close()
+		if err != nil {
+			log.Printf("conn shutdown error: %v", err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		_, err := io.Copy(stream, conn)
+		if err != nil {
+			log.Printf("send error: %v", err)
+		}
+		err = stream.Close()
+		if err != nil {
+			log.Printf("stream close error: %v", err)
+		}
+	}()
+	wg.Wait()
+
+	return nil
 }
 
 func acceptSOCKS(ln *pt.SocksListener) error {
@@ -350,8 +250,10 @@ func acceptSOCKS(ln *pt.SocksListener) error {
 			return err
 		}
 		go func() {
+			defer conn.Close()
 			err := handleSOCKS(conn)
 			if err != nil {
+				conn.Reject()
 				log.Printf("error in handling request: %s", err)
 			}
 		}()
