@@ -44,6 +44,9 @@ appengine:
 Reflector web app that runs on Google App Engine. The reflector simply
 copies requests and responses to an instance of meek-server somewhere.
 
+common:
+Shared Go code used by meek-client and meek-server.
+
 meek-client:
 The client transport plugin, run by a censored client.
 
