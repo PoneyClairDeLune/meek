@@ -87,11 +87,14 @@ type State struct {
 	conn *QueuePacketConn
 }
 
-func NewState(localAddr net.Addr, cert *tls.Certificate) (*State, error) {
+func NewState(
+	localAddr net.Addr,
+	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
+) (*State, error) {
 	pconn := NewQueuePacketConn(localAddr, quicIdleTimeout)
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{*cert},
+		GetCertificate: getCertificate,
 		NextProtos:   []string{quicNextProto},
 	}
 	quicConfig := &quic.Config{
@@ -290,6 +293,7 @@ func handleStream(ctx context.Context, stream quic.Stream) error {
 
 func initServer(addr *net.TCPAddr,
 	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
+	quicTLSGetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
 	listenAndServe func(*http.Server, chan<- error)) (*http.Server, error) {
 	// We're not capable of listening on port 0 (i.e., an ephemeral port
 	// unknown in advance). The reason is that while the net/http package
@@ -301,11 +305,7 @@ func initServer(addr *net.TCPAddr,
 		return nil, fmt.Errorf("cannot listen on port %d; configure a port using ServerTransportListenAddr", addr.Port)
 	}
 
-	cert, err := generateTLSCertificate()
-	if err != nil {
-		return nil, err
-	}
-	state, err := NewState(addr, cert)
+	state, err := NewState(addr, quicTLSGetCertificate)
 	if err != nil {
 		return nil, err
 	}
@@ -348,8 +348,11 @@ func initServer(addr *net.TCPAddr,
 	return server, err
 }
 
-func startServer(addr *net.TCPAddr) (*http.Server, error) {
-	return initServer(addr, nil, func(server *http.Server, errChan chan<- error) {
+func startServer(
+	addr *net.TCPAddr,
+	quicTLSGetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
+) (*http.Server, error) {
+	return initServer(addr, nil, quicTLSGetCertificate, func(server *http.Server, errChan chan<- error) {
 		log.Printf("listening with plain HTTP on %s", addr)
 		err := server.ListenAndServe()
 		if err != nil {
@@ -359,8 +362,12 @@ func startServer(addr *net.TCPAddr) (*http.Server, error) {
 	})
 }
 
-func startServerTLS(addr *net.TCPAddr, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) (*http.Server, error) {
-	return initServer(addr, getCertificate, func(server *http.Server, errChan chan<- error) {
+func startServerTLS(
+	addr *net.TCPAddr,
+	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
+	quicTLSGetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
+) (*http.Server, error) {
+	return initServer(addr, getCertificate, quicTLSGetCertificate, func(server *http.Server, errChan chan<- error) {
 		log.Printf("listening with HTTPS on %s", addr)
 		err := server.ListenAndServeTLS("", "")
 		if err != nil {
@@ -385,6 +392,7 @@ func main() {
 	var certFilename, keyFilename string
 	var logFilename string
 	var port int
+	var quicTLSCertFilename, quicTLSKeyFilename string
 
 	flag.StringVar(&acmeEmail, "acme-email", "", "optional contact email for Let's Encrypt notifications")
 	flag.StringVar(&acmeHostnamesCommas, "acme-hostnames", "", "comma-separated hostnames for automatic TLS certificate")
@@ -393,6 +401,8 @@ func main() {
 	flag.StringVar(&keyFilename, "key", "", "TLS private key file")
 	flag.StringVar(&logFilename, "log", "", "name of log file")
 	flag.IntVar(&port, "port", 0, "port to listen on")
+	flag.StringVar(&quicTLSCertFilename, "quic-tls-cert", "", "certificate file for QUIC TLS")
+	flag.StringVar(&quicTLSKeyFilename, "quic-tls-key", "", "private key file for QUIC TLS")
 	flag.Parse()
 
 	var err error
@@ -466,6 +476,20 @@ func main() {
 		log.Fatalf("You must use either --acme-hostnames, or --cert and --key.")
 	}
 
+	// Set up the certificate and private key for the inner QUIC TLS layer.
+	// This is entirely separate from the HTTPS-layer TLS that is set up
+	// just above.
+	var quicTLSGetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	if quicTLSCertFilename != "" && quicTLSKeyFilename != "" {
+		ctx, err := newCertContext(quicTLSCertFilename, quicTLSKeyFilename)
+		if err != nil {
+			log.Fatal(err)
+		}
+		quicTLSGetCertificate = ctx.GetCertificate
+	} else {
+		log.Fatal("The --quic-tls-cert and --quic-tls-key options are required.")
+	}
+
 	log.Printf("starting version %s (%s)", programVersion, runtime.Version())
 	servers := make([]*http.Server, 0)
 	for _, bindaddr := range ptInfo.Bindaddrs {
@@ -492,9 +516,9 @@ func main() {
 
 			var server *http.Server
 			if disableTLS {
-				server, err = startServer(bindaddr.Addr)
+				server, err = startServer(bindaddr.Addr, quicTLSGetCertificate)
 			} else {
-				server, err = startServerTLS(bindaddr.Addr, getCertificate)
+				server, err = startServerTLS(bindaddr.Addr, getCertificate, quicTLSGetCertificate)
 			}
 			if err != nil {
 				pt.SmethodError(bindaddr.MethodName, err.Error())

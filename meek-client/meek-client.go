@@ -38,6 +38,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -74,11 +75,12 @@ var helperRoundTripper = &HelperRoundTripper{
 
 // Store for command line options.
 var options struct {
-	URL       string
-	Front     string
-	ProxyURL  *url.URL
-	UseHelper bool
-	UTLSName  string
+	URL                 string
+	Front               string
+	ProxyURL            *url.URL
+	UseHelper           bool
+	UTLSName            string
+	QUICTLSPubkeyHashes []string
 }
 
 // urlAddr is a net.Addr representation of a url.URL.
@@ -162,6 +164,13 @@ func handleSOCKS(conn *pt.SocksConn) error {
 		utlsOK = true
 	}
 
+	var pubkeyHashes []string
+	if arg, ok := conn.Req.Args["quic-tls-pubkey"]; ok {
+		pubkeyHashes = arg
+	} else {
+		pubkeyHashes = options.QUICTLSPubkeyHashes
+	}
+
 	// First we check --helper: if it was specified, then we always use the
 	// helper, and utls is disallowed. Otherwise, we use utls if requested;
 	// or else fall back to native net/http.
@@ -184,9 +193,16 @@ func handleSOCKS(conn *pt.SocksConn) error {
 	pconn := NewPollingPacketConn(urlAddr{info.URL}, &info)
 	defer pconn.Close()
 
+	// The TLS configuration of the inner QUIC layer (this has nothing to do
+	// with the domain-fronted outer HTTPS layer).
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{quicNextProto},
+		// We set InsecureSkipVerify and VerifyPeerCertificate so as to
+		// do our own certificate verification, using direct lookup
+		// against the quic-tls-pubkey hashes rather than signatures by
+		// root CAs.
+		InsecureSkipVerify:    true,
+		VerifyPeerCertificate: makeVerifyPeerPublicKey(pubkeyHashes),
+		NextProtos:            []string{quicNextProto},
 	}
 	quicConfig := &quic.Config{
 		HandshakeTimeout: quicHandshakeTimeout,
@@ -304,6 +320,7 @@ func checkProxyURL(u *url.URL) error {
 func main() {
 	var helperAddr string
 	var logFilename string
+	var quicTLSPubkey string
 	var proxy string
 	var err error
 
@@ -311,6 +328,7 @@ func main() {
 	flag.StringVar(&helperAddr, "helper", "", "address of HTTP helper (browser extension)")
 	flag.StringVar(&logFilename, "log", "", "name of log file")
 	flag.StringVar(&proxy, "proxy", "", "proxy URL")
+	flag.StringVar(&quicTLSPubkey, "quic-tls-pubkey", "", "server public key hashes for QUIC TLS")
 	flag.StringVar(&options.URL, "url", "", "URL to request if no url= SOCKS arg")
 	flag.StringVar(&options.UTLSName, "utls", "", "uTLS Client Hello ID")
 	flag.Parse()
@@ -348,6 +366,8 @@ func main() {
 			log.Fatalf("can't parse proxy URL: %s", err)
 		}
 	}
+
+	options.QUICTLSPubkeyHashes = strings.Split(quicTLSPubkey, ",")
 
 	// Disable the default ProxyFromEnvironment setting.
 	// httpRoundTripper.Proxy is overridden below if options.ProxyURL is
