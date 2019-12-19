@@ -2,12 +2,12 @@
 .\"     Title: meek-client
 .\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 02/06/2019
+.\"      Date: 12/19/2019
 .\"    Manual: \ \&
 .\"    Source: \ \&
 .\"  Language: English
 .\"
-.TH "MEEK\-CLIENT" "1" "02/06/2019" "\ \&" "\ \&"
+.TH "MEEK\-CLIENT" "1" "12/19/2019" "\ \&" "\ \&"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -53,6 +53,23 @@ arg\&.
 Front domain name\&. If provided, this domain name will replace the domain name of
 \fBurl\fR
 in the DNS request and TLS SNI field\&. The URL\(cqs true domain name will still appear in the Host header of HTTP requests\&.
+.RE
+.PP
+\fBquic\-tls\-pubkey\fR=\fIPUBKEYHASH\fR
+.RS 4
+Server public key hashes to accept for the inner QUIC TLS layer\&. These have nothing to do with the outer HTTPS layer, which verifies certificates in the usual PKI way\&. The format of
+\fIPUBKEYHASH\fR
+is a base64\-encoded SHA\-256 hash of the Subject Public Key Info, as in HPKP\&. This argument may be used more than once; all public key hashes provided are considered good to verify server certificates\&. To generate a public key hash from a certificate file,
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+$ openssl x509 \-in quic\&.pem \-pubkey \-noout | openssl pkey \-pubin \-outform der | openssl dgst \-sha256 \-binary | openssl enc \-base64
+.fi
+.if n \{\
+.RE
+.\}
 .RE
 .PP
 \fButls\fR=\fICLIENTHELLOID\fR
@@ -282,6 +299,13 @@ options in a torrc file\&.
 \fB\-\-log\fR=\fIFILENAME\fR
 .RS 4
 Name of a file to write log messages to (default stderr)\&.
+.RE
+.PP
+\fB\-\-quic\-tls\-pubkey\fR=\fIPUBKEYHASH\fR[,\fIPUBKEYHASH\fR]\&...
+.RS 4
+Comma\-separated list of server public key hashes to accept for the inner QUIC TLS layer\&. The option may be given only once, but you can separate multiple hashes using commas\&. Prefer using the
+\fBquic\-tls\-pubkey\fR
+SOCKS arg over using this command line option\&.
 .RE
 .PP
 \fB\-\-url\fR=\fIURL\fR
