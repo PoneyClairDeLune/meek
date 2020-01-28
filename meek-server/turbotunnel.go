@@ -19,7 +19,7 @@ import (
 // The size of receive and send queues.
 const queueSize = 32
 
-// ClientID plays the role in HTTPPacketConn that an (IP address, port) tuple
+// ClientID plays the role in QueuePacketConn that an (IP address, port) tuple
 // plays in a net.UDPConn. It is a persistent identifier that binds together all
 // the HTTP transactions that occur as part of a session. The ClientID is sent
 // along with all HTTP requests, and the server uses the ClientID to
