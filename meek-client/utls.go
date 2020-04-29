@@ -39,7 +39,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"reflect"
 	"strings"
 	"sync"
 
@@ -47,25 +46,6 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/proxy"
 )
-
-// Copy the public fields (fields for which CanSet is true) from src to dst.
-// src and dst must be pointers to the same type. We use this to make copies of
-// httpRoundTripper. We cannot use struct assignment, because http.Transport
-// contains private mutexes. The idea of using reflection to copy only the
-// public fields comes from a post by Nick Craig-Wood:
-// https://groups.google.com/d/msg/Golang-Nuts/SDiGYNVE8iY/89hRKTF4BAAJ
-func copyPublicFields(dst, src interface{}) {
-	if reflect.TypeOf(dst) != reflect.TypeOf(src) {
-		panic("unequal types")
-	}
-	dstValue := reflect.ValueOf(dst).Elem()
-	srcValue := reflect.ValueOf(src).Elem()
-	for i := 0; i < dstValue.NumField(); i++ {
-		if dstValue.Field(i).CanSet() {
-			dstValue.Field(i).Set(srcValue.Field(i))
-		}
-	}
-}
 
 // Extract a host:port address from a URL, suitable for passing to net.Dial.
 func addrForDial(url *url.URL) (string, error) {
@@ -264,9 +244,8 @@ func makeRoundTripper(url *url.URL, clientHelloID *utls.ClientHelloID, cfg *utls
 	default:
 		// With http.Transport, copy important default fields from
 		// http.DefaultTransport, such as TLSHandshakeTimeout and
-		// IdleConnTimeout.
-		tr := &http.Transport{}
-		copyPublicFields(tr, httpRoundTripper)
+		// IdleConnTimeout, before overriding DialTLS.
+		tr := httpRoundTripper.Clone()
 		tr.DialTLS = dialTLS
 		return tr, nil
 	}
@@ -310,8 +289,7 @@ func NewUTLSRoundTripper(name string, cfg *utls.Config, proxyURL *url.URL) (http
 
 	// This special-case RoundTripper is used for HTTP requests, which don't
 	// use uTLS but should use the specified proxy.
-	httpRT := &http.Transport{}
-	copyPublicFields(httpRT, httpRoundTripper)
+	httpRT := httpRoundTripper.Clone()
 	httpRT.Proxy = http.ProxyURL(proxyURL)
 
 	return &UTLSRoundTripper{

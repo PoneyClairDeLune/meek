@@ -82,7 +82,7 @@ const (
 // We use this RoundTripper to make all our requests when neither --helper nor
 // utls is in effect. We use the defaults, except we take control of the Proxy
 // setting (notably, disabling the default ProxyFromEnvironment).
-var httpRoundTripper *http.Transport = http.DefaultTransport.(*http.Transport)
+var httpRoundTripper *http.Transport = http.DefaultTransport.(*http.Transport).Clone()
 
 // We use this RoundTripper when --helper is in effect.
 var helperRoundTripper = &HelperRoundTripper{
