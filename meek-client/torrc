@@ -4,6 +4,5 @@ UseBridges 1
 # Socks5Proxy localhost:1080
 # HTTPSProxy localhost:8080
 
-Bridge meek 0.0.2.0:2 url=https://d2zfqthxsdq309.cloudfront.net/ front=a0.awsstatic.com
 Bridge meek 0.0.2.0:3 url=https://meek.azureedge.net/ front=ajax.aspnetcdn.com
 ClientTransportPlugin meek exec ./meek-client --log meek-client.log
