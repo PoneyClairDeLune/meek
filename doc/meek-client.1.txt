@@ -56,12 +56,15 @@ The possible values of __CLIENTHELLOID__ are:
 - HelloFirefox_55
 - HelloFirefox_56
 - HelloFirefox_63
+- HelloFirefox_65
 - HelloFirefox_Auto
 - HelloChrome_58
 - HelloChrome_62
 - HelloChrome_70
+- HelloChrome_72
 - HelloChrome_Auto
 - HelloIOS_11_1
+- HelloIOS_12_1
 - HelloIOS_Auto
 
 As a special case, the values "none" and "HelloGolang"

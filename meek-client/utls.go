@@ -263,12 +263,15 @@ var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	"hellofirefox_55":       &utls.HelloFirefox_55,
 	"hellofirefox_56":       &utls.HelloFirefox_56,
 	"hellofirefox_63":       &utls.HelloFirefox_63,
+	"hellofirefox_65":       &utls.HelloFirefox_65,
 	"hellochrome_auto":      &utls.HelloChrome_Auto,
 	"hellochrome_58":        &utls.HelloChrome_58,
 	"hellochrome_62":        &utls.HelloChrome_62,
 	"hellochrome_70":        &utls.HelloChrome_70,
+	"hellochrome_72":        &utls.HelloChrome_72,
 	"helloios_auto":         &utls.HelloIOS_Auto,
 	"helloios_11_1":         &utls.HelloIOS_11_1,
+	"helloios_12_1":         &utls.HelloIOS_12_1,
 }
 
 func NewUTLSRoundTripper(name string, cfg *utls.Config, proxyURL *url.URL) (http.RoundTripper, error) {
