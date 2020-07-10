@@ -39,12 +39,12 @@ const (
 	// no way for the server to push data back to us until we poll it. When
 	// a timer expires, we send a request even if it has an empty body. The
 	// interval starts at this value and then grows.
-	initPollDelay = 100 * time.Millisecond
+	initPollDelay = 500 * time.Millisecond
 	// Maximum polling interval.
-	maxPollDelay = 5 * time.Second
+	maxPollDelay = 10 * time.Second
 	// Geometric increase in the polling interval each time we fail to read
 	// data.
-	pollDelayMultiplier = 1.5
+	pollDelayMultiplier = 2.0
 )
 
 // ClientID plays the role in PollingPacketConn that an (IP address, port) tuple
@@ -92,9 +92,10 @@ type PollingPacketConn struct {
 	poller     Poller
 	recvQueue  chan []byte
 	sendQueue  chan []byte
-	// pollQueue controls automatic polling — we don't need to poll while
-	// organic traffic exchange is happening.
-	pollQueue chan struct{}
+	// Sending on pollChan permits requestLoop to send an empty polling
+	// query. requestLoop also does its own polling according to a time
+	// schedule.
+	pollChan  chan struct{}
 	closeOnce sync.Once
 	closed    chan struct{}
 	// What error to return when the PollingPacketConn is closed.
@@ -112,10 +113,9 @@ func NewPollingPacketConn(remoteAddr net.Addr, poller Poller) *PollingPacketConn
 		poller:     poller,
 		recvQueue:  make(chan []byte, queueSize),
 		sendQueue:  make(chan []byte, queueSize),
-		pollQueue:  make(chan struct{}),
+		pollChan:   make(chan struct{}),
 		closed:     make(chan struct{}),
 	}
-	go c.pollLoop()
 	for i := 0; i < numRequestLoops; i++ {
 		go c.requestLoop()
 	}
@@ -200,49 +200,47 @@ func (c *PollingPacketConn) SetDeadline(t time.Time) error      { return errNotI
 func (c *PollingPacketConn) SetReadDeadline(t time.Time) error  { return errNotImplemented }
 func (c *PollingPacketConn) SetWriteDeadline(t time.Time) error { return errNotImplemented }
 
-func (c *PollingPacketConn) pollLoop() {
-	delay := initPollDelay
-	delayTimer := time.NewTimer(delay)
-	for {
-		select {
-		case <-c.closed:
-			delayTimer.Stop()
-			return
-		case <-c.pollQueue:
-			if !delayTimer.Stop() {
-				<-delayTimer.C
-			}
-			// An organic poll just happened, so reset the timer.
-			delay = initPollDelay
-		case <-delayTimer.C:
-			// Instruct requestLoop to quit blocking and do a poll.
-			c.sendQueue <- []byte{}
-			delay = time.Duration(float64(delay) * pollDelayMultiplier)
-			if delay > maxPollDelay {
-				delay = maxPollDelay
-			}
-		}
-		delayTimer.Reset(delay)
-	}
-}
-
 func (c *PollingPacketConn) requestLoop() {
+	pollDelay := initPollDelay
+	pollTimer := time.NewTimer(pollDelay)
 	for {
 		var body bytes.Buffer
 		body.Write(c.clientID[:])
+
+		var p []byte
+		pollTimerExpired := false
 		// Block, waiting for at least one packet.
 		select {
 		case <-c.closed:
 			return
-		case p := <-c.sendQueue:
-			// An empty slice is a special case. It doesn't mean to
-			// literally send an (encoded) packet of length zero,
-			// but to quit blocking and send an empty polling
-			// request.
-			if len(p) > 0 {
-				encapsulation.WriteData(&body, p)
+		case p = <-c.sendQueue:
+		default:
+			select {
+			case <-c.closed:
+				return
+			case p = <-c.sendQueue:
+			case <-c.pollChan:
+				p = nil
+			case <-pollTimer.C:
+				p = nil
+				pollTimerExpired = true
 			}
 		}
+
+		if len(p) > 0 {
+			// Encapsulate the packet into the request body.
+			encapsulation.WriteData(&body, p)
+
+			// A data-carrying request displaces one pending poll
+			// opportunity, if any.
+			select {
+			case <-c.pollChan:
+			default:
+			}
+		}
+
+		// Send any other packets that are immediately available, up to
+		// maxSendBundleLength.
 	loop:
 		// TODO: It would be better if maxSendBundleLength were a true
 		// maximum (we don't remove a packet from c.sendQueue unless it
@@ -253,21 +251,29 @@ func (c *PollingPacketConn) requestLoop() {
 			case <-c.closed:
 				return
 			case p := <-c.sendQueue:
-				if len(p) > 0 {
-					encapsulation.WriteData(&body, p)
-				}
+				encapsulation.WriteData(&body, p)
 			default:
 				break loop
 			}
 		}
 
-		if body.Len() > len(c.clientID) {
-			// Tell pollLoop to reset its poll timer.
-			select {
-			case c.pollQueue <- struct{}{}:
-			default:
+		if pollTimerExpired {
+			// We're polling because it's been a while since we last
+			// polled. Increase the poll delay.
+			pollDelay = time.Duration(float64(pollDelay) * pollDelayMultiplier)
+			if pollDelay > maxPollDelay {
+				pollDelay = maxPollDelay
 			}
+		} else {
+			// We're sending an actual data packet, or we're polling
+			// in response to a received packet. Reset the poll
+			// delay to initial.
+			if !pollTimer.Stop() {
+				<-pollTimer.C
+			}
+			pollDelay = initPollDelay
 		}
+		pollTimer.Reset(pollDelay)
 
 		resp, err := c.poller.Poll(&body)
 		if err != nil {
@@ -275,6 +281,8 @@ func (c *PollingPacketConn) requestLoop() {
 			return
 		}
 		defer resp.Close()
+
+		queuedPoll := false
 		for {
 			p, err := encapsulation.ReadData(resp)
 			if err == io.EOF {
@@ -286,7 +294,16 @@ func (c *PollingPacketConn) requestLoop() {
 			select {
 			case c.recvQueue <- p:
 			default:
-				// Drop packets when queue is full.
+				// Drop incoming packets when queue is full.
+			}
+			if !queuedPoll {
+				queuedPoll = true
+				for i := 0; i < 2; i++ {
+					select {
+					case c.pollChan <- struct{}{}:
+					default:
+					}
+				}
 			}
 		}
 	}
