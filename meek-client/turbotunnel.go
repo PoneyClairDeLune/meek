@@ -236,8 +236,8 @@ func (c *PollingPacketConn) requestLoop() {
 			return
 		case p := <-c.sendQueue:
 			// An empty slice is a special case. It doesn't mean to
-			// literally mean to send an (encoded) packet of length
-			// zero, but to quit blocking and send an empty polling
+			// literally send an (encoded) packet of length zero,
+			// but to quit blocking and send an empty polling
 			// request.
 			if len(p) > 0 {
 				encapsulation.WriteData(&body, p)
