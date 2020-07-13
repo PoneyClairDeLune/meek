@@ -20,7 +20,6 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
@@ -39,9 +38,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lucas-clemente/quic-go"
 	"git.torproject.org/pluggable-transports/goptlib.git"
 	"git.torproject.org/pluggable-transports/meek.git/common/encapsulation"
+	"github.com/xtaci/kcp-go/v5"
+	"github.com/xtaci/smux"
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/net/http2"
 )
@@ -62,12 +62,8 @@ const (
 	// error before deciding that it's not going to return.
 	listenAndServeErrorTimeout = 100 * time.Millisecond
 
-	// The ALPN field value for the tunnelled QUIC–TLS connection.
-	quicNextProto = "meek-quic"
-	// How long to wait for a handshake to complete at the inner QUIC layer.
-	quicHandshakeTimeout = 30 * time.Second
-	// How long before timing out connections at the inner QUIC layer.
-	quicIdleTimeout = 30 * time.Minute
+	// How long before timing out connections at the inner KCP layer.
+	smuxIdleTimeout = 30 * time.Minute
 )
 
 var ptInfo pt.ServerInfo
@@ -87,30 +83,17 @@ type State struct {
 	conn *QueuePacketConn
 }
 
-func NewState(
-	localAddr net.Addr,
-	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
-) (*State, error) {
-	pconn := NewQueuePacketConn(localAddr, quicIdleTimeout)
+func NewState(localAddr net.Addr) (*State, error) {
+	pconn := NewQueuePacketConn(localAddr, smuxIdleTimeout)
 
-	tlsConfig := &tls.Config{
-		GetCertificate: getCertificate,
-		NextProtos:   []string{quicNextProto},
-	}
-	quicConfig := &quic.Config{
-		HandshakeTimeout: quicHandshakeTimeout,
-		IdleTimeout:      quicIdleTimeout,
-	}
-	ln, err := quic.Listen(pconn, tlsConfig, quicConfig)
+	ln, err := kcp.ServeConn(nil, 0, 0, pconn)
 	if err != nil {
 		return nil, err
 	}
 
 	go func() {
 		defer ln.Close()
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		err := acceptSessions(ctx, ln)
+		err := acceptSessions(ln)
 		if err != nil {
 			log.Printf("acceptSessions: %v", err)
 		}
@@ -208,22 +191,30 @@ loop:
 	}
 }
 
-func acceptSessions(ctx context.Context, ln quic.Listener) error {
+func acceptSessions(ln *kcp.Listener) error {
 	for {
-		sess, err := ln.Accept(ctx)
+		conn, err := ln.AcceptKCP()
 		if err != nil {
 			if err, ok := err.(*net.OpError); ok && err.Temporary() {
 				continue
 			}
 			return err
 		}
+		// Permit coalescing the payloads of consecutive sends.
+		conn.SetStreamMode(true)
+		// Disable the dynamic congestion window (limit only by the
+		// maximum of local and remote static windows).
+		conn.SetNoDelay(
+			0, // default nodelay
+			0, // default interval
+			0, // default resend
+			1, // nc=1 => congestion window off
+		)
 
 		go func() {
-			defer sess.Close()
-			ctx, cancel := context.WithCancel(ctx)
-			defer cancel()
+			defer conn.Close()
 
-			err := acceptStreams(ctx, sess)
+			err := acceptStreams(conn)
 			if err != nil {
 				log.Printf("error in acceptStreams: %v", err)
 			}
@@ -231,9 +222,17 @@ func acceptSessions(ctx context.Context, ln quic.Listener) error {
 	}
 }
 
-func acceptStreams(ctx context.Context, sess quic.Session) error {
+func acceptStreams(conn *kcp.UDPSession) error {
+	smuxConfig := smux.DefaultConfig()
+	smuxConfig.Version = 2
+	smuxConfig.KeepAliveTimeout = smuxIdleTimeout
+	sess, err := smux.Server(conn, smuxConfig)
+	if err != nil {
+		return err
+	}
+
 	for {
-		stream, err := sess.AcceptStream(ctx)
+		stream, err := sess.AcceptStream()
 		if err != nil {
 			if err, ok := err.(*net.OpError); ok && err.Temporary() {
 				continue
@@ -243,10 +242,8 @@ func acceptStreams(ctx context.Context, sess quic.Session) error {
 
 		go func() {
 			defer stream.Close()
-			ctx, cancel := context.WithCancel(ctx)
-			defer cancel()
 
-			err := handleStream(ctx, stream)
+			err := handleStream(stream)
 			if err != nil {
 				log.Printf("error in handleStream: %v", err)
 			}
@@ -254,7 +251,7 @@ func acceptStreams(ctx context.Context, sess quic.Session) error {
 	}
 }
 
-func handleStream(ctx context.Context, stream quic.Stream) error {
+func handleStream(stream *smux.Stream) error {
 	// TODO: USERADDR
 	or, err := pt.DialOr(&ptInfo, "", ptMethodName)
 	if err != nil {
@@ -275,25 +272,13 @@ func handleStream(ctx context.Context, stream quic.Stream) error {
 		stream.Close()
 		or.Close()
 	}()
-
-	wgChan := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(wgChan)
-	}()
-	select {
-	case <-wgChan:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	wg.Wait()
 
 	return nil
 }
 
 func initServer(addr *net.TCPAddr,
 	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
-	quicTLSGetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
 	listenAndServe func(*http.Server, chan<- error)) (*http.Server, error) {
 	// We're not capable of listening on port 0 (i.e., an ephemeral port
 	// unknown in advance). The reason is that while the net/http package
@@ -305,7 +290,7 @@ func initServer(addr *net.TCPAddr,
 		return nil, fmt.Errorf("cannot listen on port %d; configure a port using ServerTransportListenAddr", addr.Port)
 	}
 
-	state, err := NewState(addr, quicTLSGetCertificate)
+	state, err := NewState(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -348,11 +333,8 @@ func initServer(addr *net.TCPAddr,
 	return server, err
 }
 
-func startServer(
-	addr *net.TCPAddr,
-	quicTLSGetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
-) (*http.Server, error) {
-	return initServer(addr, nil, quicTLSGetCertificate, func(server *http.Server, errChan chan<- error) {
+func startServer(addr *net.TCPAddr) (*http.Server, error) {
+	return initServer(addr, nil, func(server *http.Server, errChan chan<- error) {
 		log.Printf("listening with plain HTTP on %s", addr)
 		err := server.ListenAndServe()
 		if err != nil {
@@ -362,12 +344,8 @@ func startServer(
 	})
 }
 
-func startServerTLS(
-	addr *net.TCPAddr,
-	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
-	quicTLSGetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error),
-) (*http.Server, error) {
-	return initServer(addr, getCertificate, quicTLSGetCertificate, func(server *http.Server, errChan chan<- error) {
+func startServerTLS(addr *net.TCPAddr, getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) (*http.Server, error) {
+	return initServer(addr, getCertificate, func(server *http.Server, errChan chan<- error) {
 		log.Printf("listening with HTTPS on %s", addr)
 		err := server.ListenAndServeTLS("", "")
 		if err != nil {
@@ -392,7 +370,6 @@ func main() {
 	var certFilename, keyFilename string
 	var logFilename string
 	var port int
-	var quicTLSCertFilename, quicTLSKeyFilename string
 
 	flag.StringVar(&acmeEmail, "acme-email", "", "optional contact email for Let's Encrypt notifications")
 	flag.StringVar(&acmeHostnamesCommas, "acme-hostnames", "", "comma-separated hostnames for automatic TLS certificate")
@@ -401,8 +378,6 @@ func main() {
 	flag.StringVar(&keyFilename, "key", "", "TLS private key file")
 	flag.StringVar(&logFilename, "log", "", "name of log file")
 	flag.IntVar(&port, "port", 0, "port to listen on")
-	flag.StringVar(&quicTLSCertFilename, "quic-tls-cert", "", "certificate file for QUIC TLS")
-	flag.StringVar(&quicTLSKeyFilename, "quic-tls-key", "", "private key file for QUIC TLS")
 	flag.Parse()
 
 	var err error
@@ -476,20 +451,6 @@ func main() {
 		log.Fatalf("You must use either --acme-hostnames, or --cert and --key.")
 	}
 
-	// Set up the certificate and private key for the inner QUIC TLS layer.
-	// This is entirely separate from the HTTPS-layer TLS that is set up
-	// just above.
-	var quicTLSGetCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
-	if quicTLSCertFilename != "" && quicTLSKeyFilename != "" {
-		ctx, err := newCertContext(quicTLSCertFilename, quicTLSKeyFilename)
-		if err != nil {
-			log.Fatal(err)
-		}
-		quicTLSGetCertificate = ctx.GetCertificate
-	} else {
-		log.Fatal("The --quic-tls-cert and --quic-tls-key options are required.")
-	}
-
 	log.Printf("starting version %s (%s)", programVersion, runtime.Version())
 	servers := make([]*http.Server, 0)
 	for _, bindaddr := range ptInfo.Bindaddrs {
@@ -516,9 +477,9 @@ func main() {
 
 			var server *http.Server
 			if disableTLS {
-				server, err = startServer(bindaddr.Addr, quicTLSGetCertificate)
+				server, err = startServer(bindaddr.Addr)
 			} else {
-				server, err = startServerTLS(bindaddr.Addr, getCertificate, quicTLSGetCertificate)
+				server, err = startServerTLS(bindaddr.Addr, getCertificate)
 			}
 			if err != nil {
 				pt.SmethodError(bindaddr.MethodName, err.Error())

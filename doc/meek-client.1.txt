@@ -43,20 +43,6 @@ The possible SOCKS args are:
     of **url** in the DNS request and TLS SNI field.
     The URL's true domain name will still appear in the Host header
     of HTTP requests.
-**quic-tls-pubkey**=__PUBKEYHASH__::
-+
---
-Server public key hashes to accept for the inner QUIC TLS layer.
-These have nothing to do with the outer HTTPS layer, which verifies
-certificates in the usual PKI way.
-The format of __PUBKEYHASH__ is a base64-encoded SHA-256 hash of the Subject Public Key Info, as in HPKP.
-This argument may be used more than once;
-all public key hashes provided are considered good to verify server certificates.
-To generate a public key hash from a certificate file,
-----
-$ openssl x509 -in quic.pem -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64
-----
---
 **utls**=__CLIENTHELLOID__::
 +
 --
@@ -70,12 +56,15 @@ The possible values of __CLIENTHELLOID__ are:
 - HelloFirefox_55
 - HelloFirefox_56
 - HelloFirefox_63
+- HelloFirefox_65
 - HelloFirefox_Auto
 - HelloChrome_58
 - HelloChrome_62
 - HelloChrome_70
+- HelloChrome_72
 - HelloChrome_Auto
 - HelloIOS_11_1
+- HelloIOS_12_1
 - HelloIOS_Auto
 
 As a special case, the values "none" and "HelloGolang"
@@ -143,11 +132,6 @@ OPTIONS
 
 **--log**=__FILENAME__::
     Name of a file to write log messages to (default stderr).
-
-**--quic-tls-pubkey**=__PUBKEYHASH__[,__PUBKEYHASH__]...::
-    Comma-separated list of server public key hashes to accept for the inner QUIC TLS layer.
-    The option may be given only once, but you can separate multiple hashes using commas.
-    Prefer using the **quic-tls-pubkey** SOCKS arg over using this command line option.
 
 **--url**=__URL__::
     URL to correspond with. Prefer using the **url** SOCKS arg

@@ -27,7 +27,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"flag"
 	"fmt"
 	"io"
@@ -38,13 +37,13 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"git.torproject.org/pluggable-transports/goptlib.git"
-	"github.com/lucas-clemente/quic-go"
+	"github.com/xtaci/kcp-go/v5"
+	"github.com/xtaci/smux"
 )
 
 const (
@@ -54,12 +53,8 @@ const (
 	helperReadTimeout       = 60 * time.Second
 	helperWriteTimeout      = 2 * time.Second
 
-	// The ALPN field value for the tunnelled QUIC–TLS connection.
-	quicNextProto = "meek-quic"
-	// How long to wait for a handshake to complete at the inner QUIC layer.
-	quicHandshakeTimeout = 30 * time.Second
-	// How long before timing out connections at the inner QUIC layer.
-	quicIdleTimeout = 30 * time.Minute
+	// How long before timing out connections at the inner KCP layer.
+	smuxIdleTimeout = 30 * time.Minute
 )
 
 // We use this RoundTripper to make all our requests when neither --helper nor
@@ -75,12 +70,11 @@ var helperRoundTripper = &HelperRoundTripper{
 
 // Store for command line options.
 var options struct {
-	URL                 string
-	Front               string
-	ProxyURL            *url.URL
-	UseHelper           bool
-	UTLSName            string
-	QUICTLSPubkeyHashes []string
+	URL       string
+	Front     string
+	ProxyURL  *url.URL
+	UseHelper bool
+	UTLSName  string
 }
 
 // urlAddr is a net.Addr representation of a url.URL.
@@ -127,11 +121,11 @@ func (info *RequestInfo) Poll(out io.Reader) (in io.ReadCloser, err error) {
 }
 
 // Callback for new SOCKS requests.
-func handleSOCKS(conn *pt.SocksConn) error {
+func handleSOCKS(socks *pt.SocksConn) error {
 	var info RequestInfo
 
 	// First check url= SOCKS arg, then --url option.
-	urlArg, ok := conn.Req.Args.Get("url")
+	urlArg, ok := socks.Req.Args.Get("url")
 	if ok {
 	} else if options.URL != "" {
 		urlArg = options.URL
@@ -145,7 +139,7 @@ func handleSOCKS(conn *pt.SocksConn) error {
 	}
 
 	// First check front= SOCKS arg, then --front option.
-	front, ok := conn.Req.Args.Get("front")
+	front, ok := socks.Req.Args.Get("front")
 	if ok {
 	} else if options.Front != "" {
 		front = options.Front
@@ -157,18 +151,11 @@ func handleSOCKS(conn *pt.SocksConn) error {
 	}
 
 	// First check utls= SOCKS arg, then --utls option.
-	utlsName, utlsOK := conn.Req.Args.Get("utls")
+	utlsName, utlsOK := socks.Req.Args.Get("utls")
 	if utlsOK {
 	} else if options.UTLSName != "" {
 		utlsName = options.UTLSName
 		utlsOK = true
-	}
-
-	var pubkeyHashes []string
-	if arg, ok := conn.Req.Args["quic-tls-pubkey"]; ok {
-		pubkeyHashes = arg
-	} else {
-		pubkeyHashes = options.QUICTLSPubkeyHashes
 	}
 
 	// First we check --helper: if it was specified, then we always use the
@@ -188,27 +175,31 @@ func handleSOCKS(conn *pt.SocksConn) error {
 		info.RoundTripper = httpRoundTripper
 	}
 
-	// Each SOCKS connection corresponds to a single QUIC session with a
-	// single stream inside it.
+	// Each SOCKS connection corresponds to a single KCP session with a
+	// single smux stream inside it.
 	pconn := NewPollingPacketConn(urlAddr{info.URL}, &info)
 	defer pconn.Close()
 
-	// The TLS configuration of the inner QUIC layer (this has nothing to do
-	// with the domain-fronted outer HTTPS layer).
-	tlsConfig := &tls.Config{
-		// We set InsecureSkipVerify and VerifyPeerCertificate so as to
-		// do our own certificate verification, using direct lookup
-		// against the quic-tls-pubkey hashes rather than signatures by
-		// root CAs.
-		InsecureSkipVerify:    true,
-		VerifyPeerCertificate: makeVerifyPeerPublicKey(pubkeyHashes),
-		NextProtos:            []string{quicNextProto},
+	conn, err := kcp.NewConn2(pconn.RemoteAddr(), nil, 0, 0, pconn)
+	if err != nil {
+		return err
 	}
-	quicConfig := &quic.Config{
-		HandshakeTimeout: quicHandshakeTimeout,
-		IdleTimeout:      quicIdleTimeout,
-	}
-	sess, err := quic.Dial(pconn, pconn.RemoteAddr(), "", tlsConfig, quicConfig)
+	defer conn.Close()
+	// Permit coalescing the payloads of consecutive sends.
+	conn.SetStreamMode(true)
+	// Disable the dynamic congestion window (limit only by the
+	// maximum of local and remote static windows).
+	conn.SetNoDelay(
+		0, // default nodelay
+		0, // default interval
+		0, // default resend
+		1, // nc=1 => congestion window off
+	)
+
+	smuxConfig := smux.DefaultConfig()
+	smuxConfig.Version = 2
+	smuxConfig.KeepAliveTimeout = smuxIdleTimeout
+	sess, err := smux.Client(conn, smuxConfig)
 	if err != nil {
 		return err
 	}
@@ -220,7 +211,7 @@ func handleSOCKS(conn *pt.SocksConn) error {
 	}
 	defer stream.Close()
 
-	err = conn.Grant(&net.TCPAddr{IP: net.IPv4zero, Port: 0})
+	err = socks.Grant(&net.TCPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return err
 	}
@@ -229,18 +220,18 @@ func handleSOCKS(conn *pt.SocksConn) error {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, err := io.Copy(conn, stream)
+		_, err := io.Copy(socks, stream)
 		if err != nil {
 			log.Printf("recv error: %v", err)
 		}
-		err = conn.Close()
+		err = socks.Close()
 		if err != nil {
-			log.Printf("conn shutdown error: %v", err)
+			log.Printf("socks shutdown error: %v", err)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		_, err := io.Copy(stream, conn)
+		_, err := io.Copy(stream, socks)
 		if err != nil {
 			log.Printf("send error: %v", err)
 		}
@@ -320,7 +311,6 @@ func checkProxyURL(u *url.URL) error {
 func main() {
 	var helperAddr string
 	var logFilename string
-	var quicTLSPubkey string
 	var proxy string
 	var err error
 
@@ -328,7 +318,6 @@ func main() {
 	flag.StringVar(&helperAddr, "helper", "", "address of HTTP helper (browser extension)")
 	flag.StringVar(&logFilename, "log", "", "name of log file")
 	flag.StringVar(&proxy, "proxy", "", "proxy URL")
-	flag.StringVar(&quicTLSPubkey, "quic-tls-pubkey", "", "server public key hashes for QUIC TLS")
 	flag.StringVar(&options.URL, "url", "", "URL to request if no url= SOCKS arg")
 	flag.StringVar(&options.UTLSName, "utls", "", "uTLS Client Hello ID")
 	flag.Parse()
@@ -366,8 +355,6 @@ func main() {
 			log.Fatalf("can't parse proxy URL: %s", err)
 		}
 	}
-
-	options.QUICTLSPubkeyHashes = strings.Split(quicTLSPubkey, ",")
 
 	// Disable the default ProxyFromEnvironment setting.
 	// httpRoundTripper.Proxy is overridden below if options.ProxyURL is
