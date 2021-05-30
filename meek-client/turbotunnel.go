@@ -192,7 +192,7 @@ func (c *PollingPacketConn) Close() error {
 // LocalAddr returns this connection's random Client ID.
 func (c *PollingPacketConn) LocalAddr() net.Addr { return c.clientID }
 
-// LocalAddr returns the remoteAddr value that was passed to
+// RemoteAddr returns the remoteAddr value that was passed to
 // NewPollingPacketConn.
 func (c *PollingPacketConn) RemoteAddr() net.Addr { return c.remoteAddr }
 
