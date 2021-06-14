@@ -176,7 +176,7 @@ func WritePadding(w io.Writer, n int) (int, error) {
 	return total, nil
 }
 
-// MaxDataForSize returns the length of the longest slice that can pe passed to
+// MaxDataForSize returns the length of the longest slice that can be passed to
 // WriteData, whose total encoded size (including length prefix) is no larger
 // than n. Call this to find out if a chunk of data will fit into a length
 // budget. Panics if n == 0.
