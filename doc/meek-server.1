@@ -2,12 +2,12 @@
 .\"     Title: meek-server
 .\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 01/17/2019
+.\"      Date: 09/03/2021
 .\"    Manual: \ \&
 .\"    Source: \ \&
 .\"  Language: English
 .\"
-.TH "MEEK\-SERVER" "1" "01/17/2019" "\ \&" "\ \&"
+.TH "MEEK\-SERVER" "1" "09/03/2021" "\ \&" "\ \&"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -128,10 +128,20 @@ or
 \fB\-\-disable\-tls\fR
 is used\&.
 .RE
-.sp
-\fB\-\-disable\-tls\fR: Use plain HTTP rather than HTTPS\&. This option is only for testing purposes\&. Don\(cqt use it in production\&.
-.sp
-\fB\-\-key\fR=\fIFILENAME\fR: Name of a PEM\-encoded TLS private key file\&. Required unless \fB\-\-acme\-hostnames\fR or \fB\-\-disable\-tls\fR is used\&.
+.PP
+\fB\-\-disable\-tls\fR
+.RS 4
+Use plain HTTP rather than HTTPS\&. This option is only for testing purposes\&. Don\(cqt use it in production\&.
+.RE
+.PP
+\fB\-\-key\fR=\fIFILENAME\fR
+.RS 4
+Name of a PEM\-encoded TLS private key file\&. Required unless
+\fB\-\-acme\-hostnames\fR
+or
+\fB\-\-disable\-tls\fR
+is used\&.
+.RE
 .PP
 \fB\-\-log\fR=\fIFILENAME\fR
 .RS 4

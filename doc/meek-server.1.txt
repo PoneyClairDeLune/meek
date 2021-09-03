@@ -67,11 +67,11 @@ OPTIONS
     Name of a PEM-encoded TLS certificate file. Required unless
     **--acme-hostnames** or **--disable-tls** is used.
 
-**--disable-tls**:
+**--disable-tls**::
     Use plain HTTP rather than HTTPS. This option is only for testing
     purposes. Don't use it in production.
 
-**--key**=__FILENAME__:
+**--key**=__FILENAME__::
     Name of a PEM-encoded TLS private key file. Required unless
     **--acme-hostnames** or **--disable-tls** is used.
 
