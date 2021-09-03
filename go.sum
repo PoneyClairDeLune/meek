@@ -1,7 +1,7 @@
 git.torproject.org/pluggable-transports/goptlib.git v1.1.0 h1:LMQAA8pAho+QtYrrVNimJQiINNEwcwuuD99vezD/PAo=
 git.torproject.org/pluggable-transports/goptlib.git v1.1.0/go.mod h1:YT4XMSkuEXbtqlydr9+OxqFAyspUv0Gr9qhM3B++o/Q=
-github.com/refraction-networking/utls v0.0.0-20190909200633-43c36d3c1f57 h1:SL1K0QAuC1b54KoY1pjPWe6kSlsFHwK9/oC960fKrTY=
-github.com/refraction-networking/utls v0.0.0-20190909200633-43c36d3c1f57/go.mod h1:tz9gX959MEFfFN5whTIocCLUG57WiILqtdVxI8c6Wj0=
+github.com/refraction-networking/utls v0.0.0-20210713165636-0b2885c8c0d4 h1:n9NMHJusHylTmtaJ0Qe0VV9dkTZLiwAxHmrI/l98GeE=
+github.com/refraction-networking/utls v0.0.0-20210713165636-0b2885c8c0d4/go.mod h1:tz9gX959MEFfFN5whTIocCLUG57WiILqtdVxI8c6Wj0=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/crypto v0.0.0-20200429183012-4b2356b1ed79 h1:IaQbIIB2X/Mp/DKctl6ROxz1KyMlKp4uyvL6+kQ7C88=
 golang.org/x/crypto v0.0.0-20200429183012-4b2356b1ed79/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
