@@ -226,7 +226,7 @@ func requestResultingFromDialHTTPS(t *testing.T, makeProxy func(addr net.Addr) (
 
 func TestProxyHTTPSCONNECT(t *testing.T) {
 	req, err := requestResultingFromDialHTTPS(t, func(addr net.Addr) (*httpProxy, error) {
-		return ProxyHTTPS("tcp", addr.String(), nil, proxy.Direct, &utls.Config{InsecureSkipVerify: true}, &utls.HelloFirefox_Auto)
+		return ProxyHTTPS("tcp", addr.String(), nil, proxy.Direct, &utls.Config{InsecureSkipVerify: true, ServerName: testHost}, &utls.HelloFirefox_Auto)
 	}, "tcp", testAddr)
 	if err != nil {
 		panic(err)
