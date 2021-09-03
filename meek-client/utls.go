@@ -252,6 +252,7 @@ func makeRoundTripper(url *url.URL, clientHelloID *utls.ClientHelloID, cfg *utls
 }
 
 // When you update this map, also update the man page in doc/meek-client.1.txt.
+// https://github.com/refraction-networking/utls/blob/master/u_common.go
 var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	// No HelloCustom: not useful for external configuration.
 	// No HelloRandomized: doesn't negotiate consistent ALPN.
@@ -269,6 +270,7 @@ var clientHelloIDMap = map[string]*utls.ClientHelloID{
 	"hellochrome_62":        &utls.HelloChrome_62,
 	"hellochrome_70":        &utls.HelloChrome_70,
 	"hellochrome_72":        &utls.HelloChrome_72,
+	"hellochrome_83":        &utls.HelloChrome_83,
 	"helloios_auto":         &utls.HelloIOS_Auto,
 	"helloios_11_1":         &utls.HelloIOS_11_1,
 	"helloios_12_1":         &utls.HelloIOS_12_1,
