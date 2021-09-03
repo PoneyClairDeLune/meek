@@ -51,22 +51,23 @@ with the named TLS fingerprint for TLS camouflage.
 This arg is incompatible with the **--helper** command line option.
 The possible values of __CLIENTHELLOID__ are:
 
+// https://github.com/refraction-networking/utls/blob/0b2885c8c0d4467cfe98136748a9d011d0b8fff0/u_common.go#L126
 - HelloRandomizedALPN
 - HelloRandomizedNoALPN
 - HelloFirefox_55
 - HelloFirefox_56
 - HelloFirefox_63
 - HelloFirefox_65
-- HelloFirefox_Auto
+- HelloFirefox_Auto = HelloFirefox_65
 - HelloChrome_58
 - HelloChrome_62
 - HelloChrome_70
 - HelloChrome_72
 - HelloChrome_83
-- HelloChrome_Auto
+- HelloChrome_Auto = HelloChrome_83
 - HelloIOS_11_1
 - HelloIOS_12_1
-- HelloIOS_Auto
+- HelloIOS_Auto = HelloIOS_12_1
 
 As a special case, the values "none" and "HelloGolang"
 are recognized as aliases for
