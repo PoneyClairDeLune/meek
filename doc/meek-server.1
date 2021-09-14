@@ -2,12 +2,12 @@
 .\"     Title: meek-server
 .\"    Author: [FIXME: author] [see http://docbook.sf.net/el/author]
 .\" Generator: DocBook XSL Stylesheets v1.79.1 <http://docbook.sf.net/>
-.\"      Date: 09/03/2021
+.\"      Date: 09/14/2021
 .\"    Manual: \ \&
 .\"    Source: \ \&
 .\"  Language: English
 .\"
-.TH "MEEK\-SERVER" "1" "09/03/2021" "\ \&" "\ \&"
+.TH "MEEK\-SERVER" "1" "09/14/2021" "\ \&" "\ \&"
 .\" -----------------------------------------------------------------
 .\" * Define some portability stuff
 .\" -----------------------------------------------------------------
@@ -74,7 +74,7 @@ Configuration for meek\-server usually appears in a torrc file\&. Here is a samp
 .\}
 .nf
 ExtORPort auto
-ServerTransportListenAddr 0\&.0\&.0\&.0:443
+ServerTransportListenAddr meek 0\&.0\&.0\&.0:443
 ServerTransportPlugin meek exec \&./meek\-server \-\-acme\-hostnames meek\-server\&.example \-\-log meek\-server\&.log
 .fi
 .if n \{\

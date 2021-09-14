@@ -32,7 +32,7 @@ Configuration for meek-server usually appears in a torrc file. Here is a
 sample configuration using automatic Let's Encrypt certificates:
 ----
 ExtORPort auto
-ServerTransportListenAddr 0.0.0.0:443
+ServerTransportListenAddr meek 0.0.0.0:443
 ServerTransportPlugin meek exec ./meek-server --acme-hostnames meek-server.example --log meek-server.log
 ----
 Here is a sample configuration using externally acquired certificates:
